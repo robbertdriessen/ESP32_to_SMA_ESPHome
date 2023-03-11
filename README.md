@@ -2,11 +2,12 @@
 
 This project uses an ESP32 to connect to an SMA SunnyBoy inverter, using Bluetooth, and regularly publish generation data via MQTT. There is also an option to publish the required topics to allow Home Assistant to automatically detect the various sensors.
 
-It was originally forked from https://github.com/delhatch/ESP32_to_SMA, but I also heavily referenced https://github.com/SBFspot/SBFspot.
+It was originally forked from https://github.com/stmcodes/ESP32_to_SMA_ESPHome, https://github.com/habuild/ESP32_to_SMA, https://github.com/sillyfrog/ESP32_to_SMA, but I also heavily referenced https://github.com/SBFspot/SBFspot.
+
 
 This is working for me - but the code is some what of a mess and could do with some (lots of) cleaning up.
 
-All my development and testing was done on an SMA Sunny Boy SB 5000TL-21 (manufactured in 2021).
+All my development and testing was done on an SMA Sunny Boy SB 3000TL-20 (manufactured quite some time ago).
 
 ## Setup
 

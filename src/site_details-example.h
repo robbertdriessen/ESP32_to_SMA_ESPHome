@@ -23,6 +23,11 @@
 #define MQTT_SERVER "mqtt.server"
 // MQTT base topic, must end with a /
 #define MQTT_BASE_TOPIC "sma/solar/"
+// MQTT username
+#define MQTT_USER "mqtt-user-xyz"
+// MQTT password
+#define MQTT_PASS "mqtt-pass-123" // change me please
+
 
 // NTP server(s), at least one must be configured
 #define NTP_SERVER "ntp.pool.org"

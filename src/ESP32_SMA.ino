@@ -25,7 +25,16 @@
 #include "site_details.h"
 #include "debug.h"
 
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+
+
 #include "EspMQTTClient.h"
+
+//missing builtin led 
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 2
+#endif
 
 // A time in Unix Epoch that is "now" - used to check that the NTP server has
 // sync'd the time correctly before updating the inverter
@@ -35,8 +44,8 @@ EspMQTTClient client(
     SSID,
     PASSWORD,
     MQTT_SERVER,
-    "", // Can be omitted if not needed
-    "", // Can be omitted if not needed
+    MQTT_USER, // Can be omitted if not needed
+    MQTT_PASS, // Can be omitted if not needed
     HOST);
 
 ESP32Time ESP32rtc;     // Time structure. Holds what time the ESP32 thinks it is.
@@ -146,7 +155,7 @@ prog_uchar PROGMEM smanet2packet99[] = {0x00, 0x04, 0x70, 0x00};
 prog_uchar PROGMEM smanet2packet0x01000000[] = {0x01, 0x00, 0x00, 0x00};
 
 //Password needs to be 12 bytes long, with zeros as trailing bytes (Assume SMA INVERTER PIN code is 0000)
-const unsigned char SMAInverterPasscode[] = {'0', '0', '0', '0', 0, 0, 0, 0, 0, 0, 0, 0};
+const unsigned char SMAInverterPasscode[] = {SMA_INVERTER_USER_PASSCODE};
 
 // Function Prototypes
 bool initialiseSMAConnection();
@@ -252,6 +261,11 @@ void onConnectionEstablished()
 
 void setup()
 {
+
+// in setup()
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+
   // Get the MAC address in reverse order (not sure why, but do it here to make setup easier)
   unsigned char smaSetAddress[6] = {SMA_ADDRESS};
   for (int i = 0; i < 6; i++)
@@ -573,7 +587,7 @@ bool checkIfNeedToSetInverterTime()
 
   unsigned long timediff;
 
-  timediff = abs(datetime - ESP32rtc.getEpoch());
+  timediff = abs((long) (datetime - ESP32rtc.getEpoch()));
   debugMsg("Time diff: ");
   debugMsgLn(String(timediff));
   debugMsg("datetime: ");
