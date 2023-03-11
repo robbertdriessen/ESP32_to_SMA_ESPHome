@@ -164,79 +164,6 @@ bool checkIfNeedToSetInverterTime();
 bool getInstantACPower();
 bool getTotalPowerGeneration();
 
-// unsigned int lastprogress = -1;
-// void setupOTAServer()
-// {
-//   server.on("/", HTTP_GET, []()
-//             {
-//               server.sendHeader("Connection", "close");
-//               server.send(200, "text/plain", "login index");
-//             });
-//   server.on("/reboot", HTTP_GET, []()
-//             {
-//               debugMsgLn("Reboot requested!");
-//               server.sendHeader("Connection", "close");
-//               server.send(200, "text/plain", "Rebooting...");
-//               ESP.restart();
-//             });
-//   /*handling uploading firmware file */
-//   server.on(
-//       "/update", HTTP_POST, []()
-//       {
-//         server.sendHeader("Connection", "close");
-//         server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
-//         ESP.restart();
-//       },
-//       []()
-//       {
-//         HTTPUpload &upload = server.upload();
-//         Update.onProgress([](unsigned int progress, unsigned int total)
-//                           {
-//                             unsigned int pcg = progress / (total / 100);
-//                             Serial.printf("Progress: %u%%\r", pcg);
-//                             // Only update network every 10%
-//                             if ((pcg / 5) != (lastprogress / 5))
-//                             {
-//                               lastprogress = pcg;
-//                               debugMsg("Progress: ");
-//                               debugMsg(String(pcg));
-//                               debugMsgLn("%");
-//                             }
-//                             blinkLed();
-//                           });
-//         if (upload.status == UPLOAD_FILE_START)
-//         {
-//           debugMsg("Update: ");
-//           debugMsgLn(upload.filename.c_str());
-//           if (!Update.begin(UPDATE_SIZE_UNKNOWN))
-//           { //start with max available size
-//             Update.printError(Serial);
-//           }
-//         }
-//         else if (upload.status == UPLOAD_FILE_WRITE)
-//         {
-//           /* flashing firmware to ESP*/
-//           if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
-//           {
-//             Update.printError(Serial);
-//           }
-//         }
-//         else if (upload.status == UPLOAD_FILE_END)
-//         {
-//           if (Update.end(true))
-//           { //true to set the size to the current progress
-//             debugMsg("Update Success!");
-//             Serial.printf(" Bytes: %u", upload.totalSize);
-//             debugMsgLn("\nRebooting...");
-//           }
-//           else
-//           {
-//             Update.printError(Serial);
-//           }
-//         }
-//       });
-//   server.begin();
-// }
 
 void onConnectionEstablished()
 {
@@ -251,11 +178,6 @@ void onConnectionEstablished()
   client.publish("homeassistant/sensor/" HOST "/generation_total/config", "{\"name\": \"" FRIENDLY_NAME " Power Generation Total\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "generation_total\", \"unique_id\": \"" HOST "-generation_total\", \"unit_of_measurement\": \"Wh\", \"state_class\": \"total_increasing\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   client.publish("homeassistant/sensor/" HOST "/instant_ac/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous AC Power\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_ac\", \"unique_id\": \"" HOST "-instant_ac\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
 
-// mosquitto_pub -h core.sf -t homeassistant/sensor/sma-monitor/generation_today/config -m '{ "name": "Power Generation Today", "device_class": "energy", "state_topic": "sma/solar/generation_today", "unique_id": "sma-monitor-generation_today", "unit_of_measurement": "Wh", "state_class": "total_increasing", "device": {"identifiers": ["sma-monitor-device"]} }'
-// mosquitto_pub -h core.sf -t homeassistant/sensor/sma-monitor/generation_total/config -m '{ "name": "Power Generation Total", "device_class": "energy", "state_topic": "sma/solar/generation_total", "unique_id": "sma-monitor-generation_total", "unit_of_measurement": "Wh", "state_class": "total_increasing", "device": {"identifiers": ["sma-monitor-device"]} }'
-// mosquitto_pub -h core.sf -t homeassistant/sensor/sma-monitor/instant_ac/config -m '{ "name": "Instant AC Power", "device_class": "power", "state_topic": "sma/solar/instant_ac", "unique_id": "sma-monitor-instant_ac", "unit_of_measurement": "W", "state_class": "measurement", "device": {"identifiers": ["sma-monitor-device"]} }'
-
-// mosquitto_pub -h core.sf -t homeassistant/sensor/sma-monitor/signal/config -m '{ "name": "Signal Strength", "state_topic": "sma/solar/signal", "unique_id": "sma-monitor-signal", "unit_of_measurement": "dB", "device": {"identifiers": ["sma-monitor-device"], "name": "SMA Inverter"} }'
 #endif // PUBLISH_HASS_TOPICS
 }
 

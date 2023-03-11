@@ -2,9 +2,10 @@
 #define SITE_DETAILS_H_
 
 // Host name for ESP32, used with DHCP server, MQTT topics, identifier in HA etc
-#define HOST "sma-monitor"
+#define INSTANCE "inverter1"
+#define HOST "sma-monitor-" INSTANCE
 // Friendly name used to prefix Home Assistant entity names
-#define FRIENDLY_NAME "SMA Inverter"
+#define FRIENDLY_NAME "SMA Inverter - " INSTANCE
 
 // The "MAC" Address of the Bluetooth device in the SMA inverter.
 // Use a bluetooth scanner to get this value, it must be written in an array format,
@@ -22,11 +23,14 @@
 // MQTT server hostname/IP address
 #define MQTT_SERVER "mqtt.server"
 // MQTT base topic, must end with a /
-#define MQTT_BASE_TOPIC "sma/solar/"
+#define MQTT_BASE_TOPIC "sma/solar/" INSTANCE "/"
 // MQTT username
 #define MQTT_USER "mqtt-user-xyz"
 // MQTT password
 #define MQTT_PASS "mqtt-pass-123" // change me please
+
+//Password needs to be 12 bytes long, with zeros as trailing bytes (Assume SMA INVERTER PIN code is 0000)
+#define SMA_INVERTER_USER_PASSCODE '0', '0', '0', '0', 0, 0, 0, 0, 0, 0, 0, 0
 
 
 // NTP server(s), at least one must be configured
