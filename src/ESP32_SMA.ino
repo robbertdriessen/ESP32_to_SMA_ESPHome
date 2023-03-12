@@ -40,6 +40,8 @@
 // sync'd the time correctly before updating the inverter
 #define AFTER_NOW 1630152740
 
+#define MAX_SPOTDC 2000000000
+
 EspMQTTClient client(
     SSID,
     PASSWORD,
@@ -137,6 +139,9 @@ static long lastRanTime = 0;
 static long nowTime = 0;
 // static unsigned long spotpowerac = 0;
 static unsigned long spotpowerdc = 0;
+static float spotvoltdc=0;
+static float spotampdc=0;
+
 // "datetime" stores the number of seconds since the epoch (normally 01/01/1970), AS RETRIEVED
 //     from the SMA. The value is updated when data is read from the SMA, like when
 //     getInstantACPower() is called.
@@ -177,6 +182,9 @@ void onConnectionEstablished()
   client.publish("homeassistant/sensor/" HOST "/generation_today/config", "{\"name\": \"" FRIENDLY_NAME " Power Generation Today\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "generation_today\", \"unique_id\": \"" HOST "-generation_today\", \"unit_of_measurement\": \"Wh\", \"state_class\": \"total_increasing\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   client.publish("homeassistant/sensor/" HOST "/generation_total/config", "{\"name\": \"" FRIENDLY_NAME " Power Generation Total\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "generation_total\", \"unique_id\": \"" HOST "-generation_total\", \"unit_of_measurement\": \"Wh\", \"state_class\": \"total_increasing\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   client.publish("homeassistant/sensor/" HOST "/instant_ac/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous AC Power\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_ac\", \"unique_id\": \"" HOST "-instant_ac\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  client.publish("homeassistant/sensor/" HOST "/instant_dc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Power\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_dc\", \"unique_id\": \"" HOST "-instant_dc\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  client.publish("homeassistant/sensor/" HOST "/instant_vdc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Voltage\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc\", \"unique_id\": \"" HOST "-instant_vdc\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  client.publish("homeassistant/sensor/" HOST "/instant_adc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Ampere\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_adc\", \"unique_id\": \"" HOST "-instant_adc\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
 
 #endif // PUBLISH_HASS_TOPICS
 }
@@ -324,7 +332,6 @@ void loop()
   case 0:
     if (BTStart())
     {
-      debugMsgLn("Next: Init connection...");
       mainstate++;
       innerstate = 0;
     }
@@ -337,7 +344,6 @@ void loop()
   case 1:
     if (initialiseSMAConnection())
     {
-      debugMsgLn("Next: Logon...");
       mainstate++;
       innerstate = 0;
     }
@@ -349,7 +355,6 @@ void loop()
   case 2:
     if (logonSMAInverter())
     {
-      debugMsgLn("Next: getDailyYield...");
       mainstate++;
       innerstate = 0;
     }
@@ -359,7 +364,6 @@ void loop()
     // Doing this to set datetime
     if (getDailyYield())
     {
-      debugMsgLn("Next: Set Time...");
       mainstate++;
       innerstate = 0;
     }
@@ -368,7 +372,6 @@ void loop()
   case 4:
     if (checkIfNeedToSetInverterTime())
     {
-      debugMsgLn("Next: Default...");
       mainstate++;
       innerstate = 0;
     }
@@ -506,6 +509,7 @@ bool checkIfNeedToSetInverterTime()
 {
   //digitalClockDisplay(now());Serial.println("");
   //digitalClockDisplay(datetime);Serial.println("");
+  debugMsgLn("checkIfNeedToSetInverterTime()");
 
   unsigned long timediff;
 
@@ -533,6 +537,7 @@ prog_uchar PROGMEM smanet2settime[] = {
 void setInverterTime()
 {
   //Sets inverter time for those SMA inverters which don't have a realtime clock (Tripower 8000 models for instance)
+  debugMsgLn("setInverterTime()", innerstate);
 
   //Payload...
 
@@ -585,7 +590,7 @@ void setInverterTime()
   //01 00 00 00
   //C3 27 7E
 
-  debugMsgLn("setInverterTime");
+  
   time_t currenttime = ESP32rtc.getEpoch(); // Returns the ESP32 RTC in number of seconds since the epoch (normally 01/01/1970)
   //digitalClockDisplay(currenttime);
   writePacketHeader(level1packet);
@@ -611,8 +616,7 @@ prog_uchar PROGMEM smanet2totalyieldWh[] = {
 
 bool initialiseSMAConnection()
 {
-  // debugMsg("initialiseSMAConnection stage: ");
-  // debugMsgLn(String(innerstate));
+  debugMsgLn("initialiseSMAConnection()", innerstate);
 
   unsigned char netid;
   switch (innerstate)
@@ -715,8 +719,7 @@ prog_uchar PROGMEM smanet2packet_logon[] = {
 
 bool logonSMAInverter()
 {
-  // debugMsg("logonSMAInverter stage: ");
-  // debugMsgLn(String(innerstate));
+  debugMsgLn("logonSMAInverter()", innerstate);
 
   //Third SMANET2 packet
   switch (innerstate)
@@ -761,8 +764,8 @@ bool getDailyYield()
   //We expect a multi packet reply to this question...
   //We ask the inverter for its DAILY yield (generation)
   //once this is returned we can extract the current date/time from the inverter and set our internal clock
-  // debugMsg("getDailyYield stage: ");
-  // debugMsgLn(String(innerstate));
+  debugMsgLn("getDailyYield()", innerstate);
+
 
   switch (innerstate)
   {
@@ -845,6 +848,8 @@ prog_uchar PROGMEM smanet2acspotvalues[] = {
 
 bool getInstantACPower()
 {
+  debugMsgLn("getInstantACPower()",innerstate);
+
   int32_t thisvalue;
   //Get spot value for instant AC wattage
   // debugMsg("getInstantACPower stage: ");
@@ -853,13 +858,13 @@ bool getInstantACPower()
   switch (innerstate)
   {
   case 0:
-    writePacketHeader(level1packet);
+    writePacketHeader(level1packet); //writePacketHeader(pcktBuf, 0x01, addr_unknown);
     //writePacketHeader(level1packet,0x01,0x00,smaBTInverterAddressArray);
-    writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
+    writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0); // writePacket(pcktBuf, 0x09, 0xA0, 0, device->SUSyID, device->Serial);
     writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
     writeSMANET2ArrayFromProgmem(level1packet, smanet2acspotvalues, sizeof(smanet2acspotvalues));
-    writeSMANET2PlusPacketTrailer(level1packet);
-    writePacketLength(level1packet);
+    writeSMANET2PlusPacketTrailer(level1packet); //writePacketTrailer(pcktBuf);
+    writePacketLength(level1packet); //writePacketLength(pcktBuf);
 
     sendPacket(level1packet);
     innerstate++;
@@ -973,13 +978,13 @@ prog_uchar PROGMEM smanet2packetdcpower[] = {
     0x83, 0x00, 0x02, 0x80, 0x53, 0x00, 0x00, 0x25, 0x00, 0xFF, 0xFF, 0x25, 0x00};
 bool getInstantDCPower()
 {
-  // This appears broken...
-  return true;
+  debugMsgLn("getInstantDCPower()",innerstate);
+
+// This appears broken...
+//  return true;
 
   //DC
   //We expect a multi packet reply to this question...
-  debugMsg("getInstantDCPower stage: ");
-  debugMsgLn(String(innerstate));
 
   switch (innerstate)
   {
@@ -1014,8 +1019,6 @@ bool getInstantDCPower()
 
     //displaySpotValues(28);
 
-    //float volts=0;
-    //float amps=0;
 
     for (int i = 40 + 1; i < packetposition - 3; i += 28)
     {
@@ -1023,24 +1026,52 @@ bool getInstantDCPower()
       memcpy(&value, &level1packet[i + 8], 4);
 
       //valuetype
+      debugMsgLn("getInstantDCPower() valuetype", valuetype);
+
       //0x451f=DC Voltage  /100
       //0x4521=DC Current  /1000
       //0x251e=DC Power /1
-      //if (valuetype==0x451f) volts=(float)value/(float)100;
-      //if (valuetype==0x4521) amps=(float)value/(float)1000;
-      if (valuetype == 0x251e)
-        spotpowerdc = value;
+      if (valuetype==0x451f) spotvoltdc=(float)value/(float)100.0;
+
+      if (valuetype==0x4521) spotampdc=(float)value/(float)1000.0;
+
+      if (valuetype == 0x251e) {
+        if (value > MAX_SPOTDC) {
+          spotpowerdc = spotvoltdc * spotampdc; 
+        } else {
+          spotpowerdc = value;
+        }  
+      } 
 
       memcpy(&datetime, &level1packet[i + 4], 4);
     }
 
     //spotpowerdc=volts*amps;
 
+    client.publish(MQTT_BASE_TOPIC "instant_dc", uint64ToString(spotpowerdc), true);
+    client.publish(MQTT_BASE_TOPIC "instant_vdc", uint64ToString(spotvoltdc), true);
+    client.publish(MQTT_BASE_TOPIC "instant_adc", uint64ToString(spotampdc), true);
+
+
     debugMsg("DC ");
     //digitalClockDisplay(datetime);
     //debugMsg(" V=");Serial.print(volts);debugMsg("  A=");Serial.print(amps);
     debugMsg(" Pwr=");
     debugMsgLn(String(spotpowerdc));
+
+    debugMsg("DC ");
+    //digitalClockDisplay(datetime);
+    //debugMsg(" V=");Serial.print(volts);debugMsg("  A=");Serial.print(amps);
+    debugMsg(" Volt=");
+    debugMsgLn(String(spotvoltdc));
+
+    debugMsg("DC ");
+    //digitalClockDisplay(datetime);
+    //debugMsg(" V=");Serial.print(volts);debugMsg("  A=");Serial.print(amps);
+    debugMsg(" Amp=");
+    debugMsgLn(String(spotampdc));
+
+
     innerstate++;
     break;
 

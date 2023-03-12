@@ -32,6 +32,7 @@ uint8_t btstate = STATE_FRESH;
 // On fail, should be called again.
 bool BTStart()
 {
+  debugMsgLn("BTStart()",btstate);
   if (btstate == STATE_FRESH)
   {
     SerialBT.begin("ESP32test", true); // "true" creates this device as a BT Master.

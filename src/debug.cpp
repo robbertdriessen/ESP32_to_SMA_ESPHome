@@ -33,6 +33,19 @@ void debugMsgLn(String part)
     debugMsg(part + "\n");
 }
 
+
+void debugMsgLn(String part, unsigned int value) {
+    debugMsg(part, value);
+    debugMsgLn("");
+}
+
+
+void debugMsgLn(String part, uint8_t value)
+{
+    debugMsg(part, value);
+    debugMsgLn("");
+}
+
 void debugMsg(String part)
 {
     Serial.print(part);
@@ -44,4 +57,24 @@ void debugMsg(String part)
         debugMsgLine = "";
     }
 #endif // DEBUG_HOST
+}
+
+void debugMsg(String part, unsigned int value) {
+    Serial.print(part);
+    Serial.print(" ");
+    Serial.printf("%i", value);
+#ifdef DEBUG_HOST
+    debugMsgLine += part;
+    debugMsgLine += " ";
+    debugMsgLine += value;
+    if (debugMsgLine.endsWith("\n"))
+    {
+        sendDebugUDP(debugMsgLine);
+        debugMsgLine = "";
+    }
+#endif // DEBUG_HOST
+}
+
+void debugMsg(String part, uint8_t value) {
+    debugMsg(part, (unsigned int) value);
 }
