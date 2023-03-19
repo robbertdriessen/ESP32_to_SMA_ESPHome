@@ -40,8 +40,10 @@
 
 // Host to send UDP/syslog debug messages to.
 // Comment out the following 2 lines to disable UDP logging
-#define DEBUG_HOST "192.168.0.1"
-#define DEBUG_PORT 514
+#define SYSLOG_HOST "192.168.0.1"
+//#define DEBUG_HOST "192.168.0.1"
+#define SYSLOG_PORT 514
+//#define DEBUG_PORT 514
 
 // Comment out the following line if you do NOT want the relevant Home Assistant topics
 // published via MQTT to allow auto discovery.

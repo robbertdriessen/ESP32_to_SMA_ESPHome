@@ -3,6 +3,10 @@
  SMANetArduino.ino
  */
 #include "Arduino.h"
+#include <logging.hpp>
+
+using namespace esp32m;
+
 
 unsigned int readLevel1PacketFromBluetoothStream(int index)
 {
@@ -34,8 +38,7 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
     errorCodePCS = false;
   else
   {
-    debugMsgLn("Inv hdr");
-    Serial.println("*** Invalid header chksum.");
+    log_i("*** Invalid header chksum.");
     errorCodePCS = true;
   }
 
@@ -57,8 +60,7 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
   }
   else
   {
-    debugMsgLn("P wrng dest");
-    //Serial.println("*** Not from SMA.");
+    log_i("P wrng dest");
     errorCodeVSA = true;
   }
   if (IsPacketForMe())
@@ -68,8 +70,7 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
   }
   else
   {
-    debugMsgLn("P wrng snder");
-    //Serial.println("*** Not to me.");
+    log_i("P wrng snder");
     errorCodePIFM = true;
   }
 
@@ -450,13 +451,14 @@ bool validateChecksum()
   {
     if ((level1packet[23 + 1] != 0) || (level1packet[24 + 1] != 0))
     {
-      Serial.println(F("chksum err"));
+      log_e("chksum err");
       error();
     }
     return true;
   }
   else
   {
+    log_e("Invalid chk= ");
     Serial.print(F("Invalid chk="));
     Serial.println(FCSChecksum, HEX);
     dumpPacket('R');
@@ -481,31 +483,28 @@ void InquireBlueToothSignalStrength() {
   Serial.println("%");
 }
 */
+String getMAC(unsigned char *addr) {
+  String macRet = String("00:00:00:00:00:00");
 
-void printMAC(unsigned char *addr)
-{
-
+  macRet.clear();
   for (int i = 0; i < 6; i++)
   {
     char str[3];
     sprintf(str, "%02X", (int)addr[i]);
-    Serial.print(str);
+    macRet.concat(str);
     if (i < 5)
     {
-      Serial.print(":");
+      macRet.concat(":");
     }
   }
+  return macRet;
 }
 
 bool ValidateSenderAddress()
 {
   // Compares the SMA inverter address to the "from" address contained in the message.
   // Debug prints "P wrng dest" if there is no match.
-  Serial.print("Lvel1: ");
-  printMAC(Level1SrcAdd);
-  Serial.print("  SMABT: ");
-  printMAC(smaBTInverterAddressArray);
-  Serial.println();
+  log_i("Lvel1: %s SMABT: %s ", getMAC(Level1SrcAdd).c_str(), getMAC(smaBTInverterAddressArray).c_str());
 
   bool ret = (Level1SrcAdd[5] == smaBTInverterAddressArray[5] &&
               Level1SrcAdd[4] == smaBTInverterAddressArray[4] &&
@@ -513,15 +512,8 @@ bool ValidateSenderAddress()
               Level1SrcAdd[2] == smaBTInverterAddressArray[2] &&
               Level1SrcAdd[1] == smaBTInverterAddressArray[1] &&
               Level1SrcAdd[0] == smaBTInverterAddressArray[0]);
-  Serial.print("Sending back: ");
-  Serial.println(ret);
+  log_i("Sending back: %d", ret);
   return ret;
-  // return (Level1SrcAdd[5] == smaBTInverterAddressArray[5] &&
-  //         Level1SrcAdd[4] == smaBTInverterAddressArray[4] &&
-  //         Level1SrcAdd[3] == smaBTInverterAddressArray[3] &&
-  //         Level1SrcAdd[2] == smaBTInverterAddressArray[2] &&
-  //         Level1SrcAdd[1] == smaBTInverterAddressArray[1] &&
-  //         Level1SrcAdd[0] == smaBTInverterAddressArray[0]);
 }
 
 bool IsPacketForMe()

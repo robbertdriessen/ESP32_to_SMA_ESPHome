@@ -11,25 +11,28 @@
 //#define _NewSS_MAX_RX_BUFF 128 // RX buffer size
 
 #include "Arduino.h"
-//#include <avr/pgmspace.h>
+
 #include <ESP32Time.h>
 #include "time.h"
-//#include <NanodeMAC.h>
 #include "bluetooth.h"
 #include "SMANetArduino.h"
+#include "mainstate.h"
 
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WebServer.h>
 #include <Update.h>
 #include "site_details.h"
-#include "debug.h"
 
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
 
 #include "EspMQTTClient.h"
+
+#include <logging.hpp>
+#include <ets-appender.hpp>
+#include <udp-appender.hpp>
 
 //missing builtin led 
 #ifndef LED_BUILTIN
@@ -42,6 +45,10 @@
 
 #define MAX_SPOTDC 2000000000
 
+using namespace esp32m;
+
+
+/*
 #define MAINSTATE_INIT 0
 #define MAINSTATE_INIT_SMA_CONNECTION 1
 #define MAINSTATE_LOGON_SMA_INVERTER 2
@@ -51,14 +58,15 @@
 #define MAINSTATE_GET_INSTANT_DC_POWER 6
 #define MAINSTATE_GET_DAILY_YIELD_7 7
 #define MAINSTATE_TOTAL_POWER_GENERATION 8
+*/
 
-EspMQTTClient client(
-    SSID,
-    PASSWORD,
-    MQTT_SERVER,
-    MQTT_USER, // Can be omitted if not needed
-    MQTT_PASS, // Can be omitted if not needed
-    HOST);
+EspMQTTClient client = EspMQTTClient(
+      SSID,
+      PASSWORD,
+      MQTT_SERVER,
+      MQTT_USER, // Can be omitted if not needed
+      MQTT_PASS, // Can be omitted if not needed
+      HOST);
 
 ESP32Time ESP32rtc;     // Time structure. Holds what time the ESP32 thinks it is.
 ESP32Time nextMidnight; // Create a time structure to hold the answer to "What time (in time_t seconds) is the upcoming midnight?"
@@ -69,6 +77,14 @@ ESP32Time bedTime;
 #endif
 //#define WAKEUP_TIME 22,30 
 //#define BED_TIME 05,45
+
+#ifdef SYSLOG_HOST
+#ifdef SYSLOG_PORT
+  UDPAppender udpappender(SYSLOG_HOST, SYSLOG_PORT);
+#else
+  UDPAppender udpappender(SYSLOG_HOST, 514);
+#endif
+#endif
 
 
 //BST Start and end dates - this needs moving into some sort of PROGMEM array for the years or calculated based on the BST logic see
@@ -87,13 +103,7 @@ ESP32Time bedTime;
 #define NaN_S32 (int32_t)0x80000000  // "Not a Number" representation for LONG (converted to 0 by SBFspot)
 #define NaN_U32 (uint32_t)0xFFFFFFFF // "Not a Number" representation for ULONG (converted to 0 by SBFspot)
 
-// #undef debugMsgln
-// #define debugMsgln(s) (__extension__({ Serial.println(F(s)); }))
-// #define debugMsgln(s) (__extension__({ __asm__("nop\n\t"); }))
 
-// #undef debugMsg
-// #define debugMsg(s) (__extension__({ Serial.print(F(s)); }))
-// #define debugMsg(s) (__extension__({ __asm__("nop\n\t"); }))
 
 /// Convert a uint64_t (unsigned long long) to a string.
 /// Arduino String/toInt/Serial.print() can't handle printing 64 bit values.
@@ -192,8 +202,8 @@ bool getTotalPowerGeneration();
 void onConnectionEstablished()
 {
   client.publish(MQTT_BASE_TOPIC "LWT", "online", true);
-  debugMsgLn("WiFi and MQTT connected");
-  debugMsgLn("v1 Build time: " __TIME__ " date: " __DATE__);
+  log_i("WiFi and MQTT connected");
+  log_i("v1 Build d (%s) t (%s) "  ,__DATE__ , __TIME__) ;
 
 #ifdef PUBLISH_HASS_TOPICS
   // client.publish(MQTT_BASE_TOPIC "LWT", "online", true);
@@ -210,10 +220,7 @@ void onConnectionEstablished()
 
 void setup()
 {
-
-// in setup()
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
-
+  Logging::addAppender(&ETSAppender::instance());
 
   // Get the MAC address in reverse order (not sure why, but do it here to make setup easier)
   unsigned char smaSetAddress[6] = {SMA_ADDRESS};
@@ -221,7 +228,6 @@ void setup()
     smaBTInverterAddressArray[i] = smaSetAddress[5 - i];
 
   pinMode(LED_BUILTIN, OUTPUT);
-  debugSetup();
 
   Serial.begin(115200);                      //Serial port for debugging output
   ESP32rtc.setTime(30, 24, 15, 17, 1, 2021); // 17th Jan 2021 15:24:30  // Need this to be accurate. Since connecting to the internet anyway, use NTP.
@@ -232,17 +238,23 @@ void setup()
   client.enableHTTPWebUpdater("/update");                               // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overrited with enableHTTPWebUpdater("user", "password").
   client.enableLastWillMessage(MQTT_BASE_TOPIC "LWT", "offline", true); // You can activate the retain flag by setting the third parameter to true
 
-  debugMsgLn("");
-  debugMsg("Connected to ");
-  debugMsgLn(SSID);
-  debugMsg("IP address: ");
-  debugMsgLn(WiFi.localIP().toString());
-  // Serial.println(WiFi.localIP());
+
+#ifdef SYSLOG_HOST
+  udpappender.setMode(UDPAppender::Format::Syslog);
+  Logging::addAppender(&udpappender);
+#endif
+
+  log_i("Connected to %s" , SSID);
+  log_i("IP address: %s" , WiFi.localIP().toString().c_str());
 
   // Always set time to GMT timezone
   configTime(timeZoneOffset, 0, NTP_SERVER);
 
+  Logging::hookUartLogger();
   // setupOTAServer();
+
+
+  log_i("hello world!");
 }
 
 void everySecond()
@@ -252,6 +264,7 @@ void everySecond()
 
 void every5Minutes()
 {
+  log_i("every5Minutes()");
   if (client.isConnected())
   {
     client.publish(MQTT_BASE_TOPIC "signal", String(WiFi.RSSI()));
@@ -275,7 +288,8 @@ void dodelay(unsigned long duration)
   sleepuntil = millis() + duration;
 }
 
-uint8_t mainstate = MAINSTATE_INIT;
+//uint8_t mainstate = MAINSTATE_INIT;
+MainState mainstate = MAINSTATE_INIT;
 uint8_t innerstate = 0;
 unsigned long nextSecond = 0;
 unsigned long next5Minute = 0;
@@ -289,7 +303,7 @@ void loop()
   struct tm timeinfo;
   client.loop();
   // server.handleClient();
-
+  
   if (millis() >= nextSecond)
   {
     nextSecond = millis() + 1000;
@@ -336,8 +350,8 @@ void loop()
   // Wait for initial NTP sync before setting up inverter
   if (mainstate == MAINSTATE_INIT && ESP32rtc.getEpoch() < AFTER_NOW)
   {
-    debugMsgLn("NTP not yet sync'd, sleeping");
-    dodelay(2000);
+    log_i("NTP not yet sync'd, sleeping");
+    dodelay(500);
   }
 
   // Only bother to do anything if we are connected to WiFi and MQTT
@@ -346,6 +360,9 @@ void loop()
 
   // Run the "main" BT loop
   blinkLed();
+
+  log_i("Loop mainstate: %s", mainstate.toString().c_str());
+
   switch (mainstate)
   {
   case MAINSTATE_INIT:
@@ -356,7 +373,7 @@ void loop()
     }
     else
     {
-      dodelay(5000);
+      dodelay(1000);
     }
     break;
 
@@ -437,11 +454,10 @@ void loop()
   //getInverterName();
   //HistoricData();
   lastRanTime = millis() - 4000;
+  log_i("While...");
 
-  debugMsgLn("While...");
   while (1)
   {
-    //debugMsgln("Main loop");
 
     //HowMuchMemory();
 
@@ -456,7 +472,6 @@ void loop()
     }
 
     //digitalClockDisplay(now());
-    //debugMsgln("");
 
     //The inverter always runs in UTC time (and so does this program!), and ignores summer time, so fix that here...
     //add 1 hour to readings if its summer
@@ -508,9 +523,7 @@ void loop()
     }
 #endif
 
-    //debugMsg("Wait for ");
     //digitalClockDisplay( checktime );
-    //debugMsgln("");
 
     //Delay for approx. 4 seconds between instant AC power readings
 
@@ -533,17 +546,12 @@ bool checkIfNeedToSetInverterTime()
 {
   //digitalClockDisplay(now());Serial.println("");
   //digitalClockDisplay(datetime);Serial.println("");
-  debugMsgLn("checkIfNeedToSetInverterTime()");
+  log_i("checkIfNeedToSetInverterTime()");
 
   unsigned long timediff;
 
   timediff = abs((long) (datetime - ESP32rtc.getEpoch()));
-  debugMsg("Time diff: ");
-  debugMsgLn(String(timediff));
-  debugMsg("datetime: ");
-  debugMsgLn(String(datetime));
-  debugMsg("epoch: ");
-  debugMsgLn(String(ESP32rtc.getEpoch()));
+  log_i("Time diff: %lu, datetime: %lu, epoch: %lu " , timediff, datetime, ESP32rtc.getEpoch());
 
   if (timediff > 60)
   {
@@ -561,7 +569,7 @@ prog_uchar PROGMEM smanet2settime[] = {
 void setInverterTime()
 {
   //Sets inverter time for those SMA inverters which don't have a realtime clock (Tripower 8000 models for instance)
-  debugMsgLn("setInverterTime()", innerstate);
+  log_i("setInverterTime(%i) " , innerstate);
 
   //Payload...
 
@@ -640,7 +648,8 @@ prog_uchar PROGMEM smanet2totalyieldWh[] = {
 
 bool initialiseSMAConnection()
 {
-  debugMsgLn("initialiseSMAConnection()", innerstate);
+  log_i("initialiseSMAConnection(%i) " , innerstate);
+
 
   unsigned char netid;
   switch (innerstate)
@@ -743,7 +752,7 @@ prog_uchar PROGMEM smanet2packet_logon[] = {
 
 bool logonSMAInverter()
 {
-  debugMsgLn("logonSMAInverter()", innerstate);
+  log_i("logonSMAInverter(%i)" , innerstate);
 
   //Third SMANET2 packet
   switch (innerstate)
@@ -788,8 +797,7 @@ bool getDailyYield()
   //We expect a multi packet reply to this question...
   //We ask the inverter for its DAILY yield (generation)
   //once this is returned we can extract the current date/time from the inverter and set our internal clock
-  debugMsgLn("getDailyYield()", innerstate);
-
+  log_i("getDailyYield(%i)" , innerstate);
 
   switch (innerstate)
   {
@@ -854,8 +862,8 @@ bool getDailyYield()
       //setTime(datetime);
       currentvalue = value64;
       client.publish(MQTT_BASE_TOPIC "generation_today", uint64ToString(currentvalue), true);
-      debugMsg("Day Yield: ");
-      debugMsgLn(String((double)value64 / 1000));
+      log_i("Day Yield: %f" , (double)value64 / 1000);
+
     }
     innerstate++;
     break;
@@ -872,7 +880,7 @@ prog_uchar PROGMEM smanet2acspotvalues[] = {
 
 bool getInstantACPower()
 {
-  debugMsgLn("getInstantACPower()",innerstate);
+  log_i("getInstantACPower(%i)" , innerstate);
 
   int32_t thisvalue;
   //Get spot value for instant AC wattage
@@ -917,18 +925,8 @@ bool getInstantACPower()
     currentvalue = thisvalue;
     client.publish(MQTT_BASE_TOPIC "instant_ac", uint64ToString(currentvalue), true);
 
-    debugMsg("AC ");
-    //Serial.println(" ");
-    //Serial.println("Got AC power level. ");
-    //digitalClockDisplay(datetime);
-    debugMsg(" Pwr=");
-    //if( value != oldvalue ) {
-    //Serial.println(" ");
-    //Serial.print("*** Power Level = ");
-    debugMsgLn(String(thisvalue));
-    //Serial.println(" Watts RMS ***");
-    //Serial.print(" ");
-    //}
+    log_i("AC Pwr= %li " , thisvalue);
+
     spotpowerac = thisvalue;
 
     //displaySpotValues(28);
@@ -948,6 +946,7 @@ bool getTotalPowerGeneration()
   //Gets the total kWh the SMA inverter has generated in its lifetime...
   // debugMsg("getTotalPowerGeneration stage: ");
   // debugMsgLn(String(innerstate));
+  log_i("getTotalPowerGeneration(%i)" , innerstate);
 
   switch (innerstate)
   {
@@ -981,9 +980,8 @@ bool getTotalPowerGeneration()
     memcpy(&datetime, &level1packet[40 + 1 + 4], 4);
     memcpy(&value64, &level1packet[40 + 1 + 8], 8);
     //digitalClockDisplay(datetime);
-    debugMsg("Total Power: ");
-    debugMsgLn(String((double)value64 / 1000));
     currentvalue = value64;
+    log_i("Total Power: %f ", (double)value64 / 1000);
     client.publish(MQTT_BASE_TOPIC "generation_total", uint64ToString(currentvalue), true);
     innerstate++;
     break;
@@ -1002,11 +1000,7 @@ prog_uchar PROGMEM smanet2packetdcpower[] = {
     0x83, 0x00, 0x02, 0x80, 0x53, 0x00, 0x00, 0x25, 0x00, 0xFF, 0xFF, 0x25, 0x00};
 bool getInstantDCPower()
 {
-  debugMsgLn("getInstantDCPower()",innerstate);
-
-// This appears broken...
-//  return true;
-
+  log_i("getInstantDCPower(%i)", innerstate);
   //DC
   //We expect a multi packet reply to this question...
 
@@ -1047,7 +1041,7 @@ bool getInstantDCPower()
       memcpy(&value, &level1packet[i + 8], 4);
 
       //valuetype
-      debugMsgLn("getInstantDCPower() valuetype", valuetype);
+      log_i("getInstantDCPower(): valuetype: %li value: %lu ", valuetype, value);
 
       //0x451f=DC Voltage  /100
       //0x4521=DC Current  /1000
@@ -1073,25 +1067,7 @@ bool getInstantDCPower()
     client.publish(MQTT_BASE_TOPIC "instant_vdc", uint64ToString(spotvoltdc), true);
     client.publish(MQTT_BASE_TOPIC "instant_adc", uint64ToString(spotampdc), true);
 
-
-    debugMsg("DC ");
-    //digitalClockDisplay(datetime);
-    //debugMsg(" V=");Serial.print(volts);debugMsg("  A=");Serial.print(amps);
-    debugMsg(" Pwr=");
-    debugMsgLn(String(spotpowerdc));
-
-    debugMsg("DC ");
-    //digitalClockDisplay(datetime);
-    //debugMsg(" V=");Serial.print(volts);debugMsg("  A=");Serial.print(amps);
-    debugMsg(" Volt=");
-    debugMsgLn(String(spotvoltdc));
-
-    debugMsg("DC ");
-    //digitalClockDisplay(datetime);
-    //debugMsg(" V=");Serial.print(volts);debugMsg("  A=");Serial.print(amps);
-    debugMsg(" Amp=");
-    debugMsgLn(String(spotampdc));
-
+    log_i("DC Pwr=%lu Volt=%f Amp=%f " , spotpowerdc, spotvoltdc, spotampdc);
 
     innerstate++;
     break;
