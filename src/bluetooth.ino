@@ -41,14 +41,8 @@ bool BTStart()
     SerialBT.begin("ESP32test", true); // "true" creates this device as a BT Master.
     SerialBT.setPin("0000");           // pin as in "PIN" This is the BT connection pin, not login pin. ALWAYS 0000, unchangable.
     updateMyDeviceAddress();
-    log_i("My BT Address: ") ;
-    //debugMsg("My BT Address: ");
     const uint8_t *addr = esp_bt_dev_get_address();
-    printDeviceAddress(addr);
-    log_i("");
-    log_i("SMA BT Address (reversed): ");
-    printDeviceAddress(smaBTInverterAddressArray);
-    log_i("");
+    log_i("My BT Address: %s  SMA BT Address (reversed): %s ", getDeviceAddress(addr).c_str(), getDeviceAddress(smaBTInverterAddressArray).c_str()) ;
     log_i("The SM32 started in master mode. Now trying to connect to SMA inverter.");
     SerialBT.connect(address);
   }
@@ -72,19 +66,20 @@ bool BTCheckConnected()
   return SerialBT.connected(1);
 }
 
-void printDeviceAddress(const uint8_t *point)
-{
+String getDeviceAddress(const uint8_t *point) {
+  String daString("00:00:00:00:00:00");
   for (int i = 0; i < 6; i++)
   {
     char str[3];
     sprintf(str, "%02X", (int)point[i]);
-    log_i(str);
+    daString.concat(str);
 
     if (i < 5)
     {
-      log_i(":");
+      daString.concat(":");
     }
   }
+  return daString;
 }
 
 void updateMyDeviceAddress()

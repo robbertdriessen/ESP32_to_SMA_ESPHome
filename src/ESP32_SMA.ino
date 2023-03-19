@@ -220,7 +220,13 @@ void onConnectionEstablished()
 
 void setup()
 {
+  Serial.begin(115200);                      //Serial port for debugging output
+
   Logging::addAppender(&ETSAppender::instance());
+#ifdef SYSLOG_HOST
+  udpappender.setMode(UDPAppender::Format::Syslog);
+  Logging::addAppender(&udpappender);
+#endif
 
   // Get the MAC address in reverse order (not sure why, but do it here to make setup easier)
   unsigned char smaSetAddress[6] = {SMA_ADDRESS};
@@ -229,7 +235,6 @@ void setup()
 
   pinMode(LED_BUILTIN, OUTPUT);
 
-  Serial.begin(115200);                      //Serial port for debugging output
   ESP32rtc.setTime(30, 24, 15, 17, 1, 2021); // 17th Jan 2021 15:24:30  // Need this to be accurate. Since connecting to the internet anyway, use NTP.
 
   client.setMaxPacketSize(512); // must be big enough to send home assistant config
@@ -239,10 +244,6 @@ void setup()
   client.enableLastWillMessage(MQTT_BASE_TOPIC "LWT", "offline", true); // You can activate the retain flag by setting the third parameter to true
 
 
-#ifdef SYSLOG_HOST
-  udpappender.setMode(UDPAppender::Format::Syslog);
-  Logging::addAppender(&udpappender);
-#endif
 
   log_i("Connected to %s" , SSID);
   log_i("IP address: %s" , WiFi.localIP().toString().c_str());
