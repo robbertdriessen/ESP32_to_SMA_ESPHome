@@ -42,6 +42,16 @@
 
 #define MAX_SPOTDC 2000000000
 
+#define MAINSTATE_INIT 0
+#define MAINSTATE_INIT_SMA_CONNECTION 1
+#define MAINSTATE_LOGON_SMA_INVERTER 2
+#define MAINSTATE_GET_DAILY_YIELD_3 3
+#define MAINSTATE_CHECK_SET_INVERTER_TIME 4
+#define MAINSTATE_GET_INSTANT_AC_POWER 5
+#define MAINSTATE_GET_INSTANT_DC_POWER 6
+#define MAINSTATE_GET_DAILY_YIELD_7 7
+#define MAINSTATE_TOTAL_POWER_GENERATION 8
+
 EspMQTTClient client(
     SSID,
     PASSWORD,
@@ -52,6 +62,14 @@ EspMQTTClient client(
 
 ESP32Time ESP32rtc;     // Time structure. Holds what time the ESP32 thinks it is.
 ESP32Time nextMidnight; // Create a time structure to hold the answer to "What time (in time_t seconds) is the upcoming midnight?"
+
+#ifdef SLEEP_ROUTINE
+ESP32Time wakeupTime;
+ESP32Time bedTime;
+#endif
+//#define WAKEUP_TIME 22,30 
+//#define BED_TIME 05,45
+
 
 //BST Start and end dates - this needs moving into some sort of PROGMEM array for the years or calculated based on the BST logic see
 //http://www.time.org.uk/bstgmtcodepage1.aspx
@@ -130,6 +148,7 @@ void blinkLedOff()
 
 //Do we switch off upload to sites when its dark?
 #undef allowsleep
+//#define allowsleep
 
 static uint64_t currentvalue = 0;
 static unsigned int valuetype = 0;
@@ -137,7 +156,7 @@ static unsigned long value = 0;
 static uint64_t value64 = 0;
 static long lastRanTime = 0;
 static long nowTime = 0;
-// static unsigned long spotpowerac = 0;
+static unsigned long spotpowerac = 0;
 static unsigned long spotpowerdc = 0;
 static float spotvoltdc=0;
 static float spotampdc=0;
@@ -207,18 +226,6 @@ void setup()
   Serial.begin(115200);                      //Serial port for debugging output
   ESP32rtc.setTime(30, 24, 15, 17, 1, 2021); // 17th Jan 2021 15:24:30  // Need this to be accurate. Since connecting to the internet anyway, use NTP.
 
-  // Connect to WiFi network
-  // WiFi.begin(SSID, PASSWORD);
-  // Serial.println("");
-
-  // // Wait for connection
-  // while (WiFi.status() != WL_CONNECTED)
-  // {
-  //   blinkLed();
-  //   delay(500);
-  //   Serial.print(".");
-  // }
-
   client.setMaxPacketSize(512); // must be big enough to send home assistant config
   client.enableMQTTPersistence();
   client.enableDebuggingMessages();                                     // Enable debugging messages sent to serial output
@@ -241,21 +248,6 @@ void setup()
 void everySecond()
 {
   blinkLedOff();
-
-  // debugMsg("Connection is: ");
-  // if (client.isConnected())
-  //   debugMsgLn("connected");
-  // else
-  //   debugMsgLn("DISconnected");
-
-  // client.publish(MQTT_BASE_TOPIC "hello", "message");
-
-  // debugMsg("Current Time: ");
-  // char timeStr[22];
-  // struct tm timeinfo;
-  // getLocalTime(&timeinfo);
-  // strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
-  // debugMsgLn(timeStr);
 }
 
 void every5Minutes()
@@ -266,16 +258,29 @@ void every5Minutes()
   }
 }
 
+void everyHour()
+{
+
+}
+
+void everyDay()
+{
+
+}
+
+
 unsigned long sleepuntil = 0;
 void dodelay(unsigned long duration)
 {
   sleepuntil = millis() + duration;
 }
 
-uint8_t mainstate = 0;
+uint8_t mainstate = MAINSTATE_INIT;
 uint8_t innerstate = 0;
 unsigned long nextSecond = 0;
 unsigned long next5Minute = 0;
+unsigned long nextHour = 0;
+unsigned long nextDay = 0;
 int thisminute = -1;
 int checkbtminute = -1;
 
@@ -297,25 +302,39 @@ void loop()
     every5Minutes();
   }
 
+  if (millis() >= nextHour)
+  {
+    nextHour = millis() + 1000 * 3600;
+    everyHour();
+  }
+
+  if (millis() >= nextDay)
+  {
+    nextDay = millis() + 1000 * 3600 * 24 ;
+    everyDay();
+  }
+
   // "delay" the main BT loop
   if (millis() < sleepuntil)
     return;
 
   // if in the main loop, only run at the top of the minute
-  if (mainstate >= 5)
+  if (mainstate >= MAINSTATE_GET_INSTANT_AC_POWER)
   {
     getLocalTime(&timeinfo);
     if (timeinfo.tm_min == thisminute)
       return;
+
+    
     // Check we are connected to BT, if not, restart process
     if (!BTCheckConnected())
     {
-      mainstate = 0;
+      mainstate = MAINSTATE_INIT;
     }
   }
 
   // Wait for initial NTP sync before setting up inverter
-  if (mainstate == 0 && ESP32rtc.getEpoch() < AFTER_NOW)
+  if (mainstate == MAINSTATE_INIT && ESP32rtc.getEpoch() < AFTER_NOW)
   {
     debugMsgLn("NTP not yet sync'd, sleeping");
     dodelay(2000);
@@ -329,7 +348,7 @@ void loop()
   blinkLed();
   switch (mainstate)
   {
-  case 0:
+  case MAINSTATE_INIT:
     if (BTStart())
     {
       mainstate++;
@@ -341,7 +360,7 @@ void loop()
     }
     break;
 
-  case 1:
+  case MAINSTATE_INIT_SMA_CONNECTION:
     if (initialiseSMAConnection())
     {
       mainstate++;
@@ -349,10 +368,7 @@ void loop()
     }
     break;
 
-    //Dont really need this...
-    //InquireBlueToothSignalStrength();
-
-  case 2:
+  case MAINSTATE_LOGON_SMA_INVERTER:
     if (logonSMAInverter())
     {
       mainstate++;
@@ -360,7 +376,7 @@ void loop()
     }
     break;
 
-  case 3:
+  case MAINSTATE_GET_DAILY_YIELD_3 : //3
     // Doing this to set datetime
     if (getDailyYield())
     {
@@ -369,7 +385,7 @@ void loop()
     }
     break;
 
-  case 4:
+  case MAINSTATE_CHECK_SET_INVERTER_TIME: // 4:
     if (checkIfNeedToSetInverterTime())
     {
       mainstate++;
@@ -379,7 +395,7 @@ void loop()
 
     // --------- regular loop -----------------
 
-  case 5:
+  case MAINSTATE_GET_INSTANT_AC_POWER:// 5:
     if (getInstantACPower())
     {
       mainstate++;
@@ -387,7 +403,7 @@ void loop()
     }
     break;
 
-  case 6:
+  case MAINSTATE_GET_INSTANT_DC_POWER: //6:
     if (getInstantDCPower())
     {
       mainstate++;
@@ -395,7 +411,7 @@ void loop()
     }
     break;
 
-  case 7:
+  case MAINSTATE_GET_DAILY_YIELD_7:// 7:
     if (getDailyYield())
     {
       mainstate++;
@@ -403,7 +419,7 @@ void loop()
     }
     break;
 
-  case 8:
+  case MAINSTATE_TOTAL_POWER_GENERATION: //8:
     if (getTotalPowerGeneration())
     {
       mainstate++;
@@ -412,7 +428,7 @@ void loop()
     break;
 
   default:
-    mainstate = 5;
+    mainstate = MAINSTATE_GET_INSTANT_AC_POWER;
     innerstate = 0;
     thisminute = timeinfo.tm_min;
   }
@@ -445,6 +461,14 @@ void loop()
     //The inverter always runs in UTC time (and so does this program!), and ignores summer time, so fix that here...
     //add 1 hour to readings if its summer
     // DRH Temp removal of: if ((datetime>=SummerStart) && (datetime<=SummerEnd)) datetime+=60*60;
+
+#ifdef SLEEP_ROUTINE
+
+ //wakeupTime;
+ //bedTime;
+#endif
+
+
 
 #ifdef allowsleep
     if ((ESP32rtc.getEpoch() > (datetime + 3600)) && (spotpowerac == 0))
@@ -889,7 +913,7 @@ bool getInstantACPower()
     datetime = get_long(level1packet + 40 + 1 + 4);
     thisvalue = get_long(level1packet + 40 + 1 + 8);
     // memcpy(&thisvalue, &level1packet[40 + 1 + 8], 4);
-
+    
     currentvalue = thisvalue;
     client.publish(MQTT_BASE_TOPIC "instant_ac", uint64ToString(currentvalue), true);
 
@@ -905,7 +929,7 @@ bool getInstantACPower()
     //Serial.println(" Watts RMS ***");
     //Serial.print(" ");
     //}
-    // spotpowerac = value;
+    spotpowerac = thisvalue;
 
     //displaySpotValues(28);
     innerstate++;
@@ -1016,10 +1040,7 @@ bool getInstantDCPower()
     break;
 
   case 2:
-
     //displaySpotValues(28);
-
-
     for (int i = 40 + 1; i < packetposition - 3; i += 28)
     {
       valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;

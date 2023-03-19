@@ -190,16 +190,6 @@ void convertBTADDRStringToArray(char *tempbuf, unsigned char *outarray, char mat
   //Convert BT Address into a more useful byte array, the BT address is in a really awful format to parse!
   //Must be a better way of doing this function!
 
-  //Unit test cases...
-  //Test BT address strcpy(tempbuf,"1234:56:0\x0");
-  //Test BT address strcpy(tempbuf,"1010:7:310068\x0");
-  //Test BT address strcpy(tempbuf,"80:25:1dac53\x0");
-  //Test BT address strcpy(tempbuf,"2:72:D2224\x0");
-  //Test BT address strcpy(tempbuf,"1234:56:0\x0");
-  //Test BT address strcpy(tempbuf,"1:72:D2224\x0");
-  //Test BT address strcpy(tempbuf,"1234:56:0\x0");
-  //Test BT address strcpy(tempbuf,"1234,56,abcdef\x0");
-  //Test BT address strcpy(tempbuf,"0002,72,0d2224\x0");
   int l = strlen(tempbuf);
   char *firstcolon = strchr(tempbuf, match) + 1;
   char *lastcolon = strrchr(tempbuf, match) + 1;
