@@ -34,7 +34,7 @@ uint8_t btstate = STATE_FRESH;
 // On fail, should be called again.
 bool BTStart()
 {
-  log_i("BTStart(%i)", btstate);
+  log_d("BTStart(%i)", btstate);
 
   if (btstate == STATE_FRESH)
   {
@@ -42,21 +42,21 @@ bool BTStart()
     SerialBT.setPin("0000");           // pin as in "PIN" This is the BT connection pin, not login pin. ALWAYS 0000, unchangable.
     updateMyDeviceAddress();
     const uint8_t *addr = esp_bt_dev_get_address();
-    log_i("My BT Address: %s  SMA BT Address (reversed): %s ", getDeviceAddress(addr).c_str(), getDeviceAddress(smaBTInverterAddressArray).c_str()) ;
-    log_i("The SM32 started in master mode. Now trying to connect to SMA inverter.");
+    log_d("My BT Address: %s  SMA BT Address (reversed): %s ", getDeviceAddress(addr).c_str(), getDeviceAddress(smaBTInverterAddressArray).c_str()) ;
+    log_d("The SM32 started in master mode. Now trying to connect to SMA inverter.");
     SerialBT.connect(address);
   }
 
   if (SerialBT.connected(1))
   {
     btstate = STATE_CONNECTED;
-    log_i("Connected succesfully!");
+    log_w("Connected succesfully!");
     return true;
   }
   else
   {
     btstate = STATE_SETUP;
-    log_i("Failed to connect. Make sure remote device is available and in range, then restart app.");
+    log_e("Failed to connect. Make sure remote device is available and in range, then restart app.");
     return false;
   }
 }
