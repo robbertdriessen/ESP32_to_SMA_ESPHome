@@ -30,7 +30,7 @@
 
 #include <logging.hpp>
 #include <ets-appender.hpp>
-#include <udp-appender-espmqtt.hpp>
+#include <udp-appender.hpp>
 
 
 // A time in Unix Epoch that is "now" - used to check that the NTP server has
@@ -59,9 +59,9 @@ ESP32Time bedTime;
 
 #ifdef SYSLOG_HOST
 #ifdef SYSLOG_PORT
-  UDPAppenderEspMQTT udpappender(SYSLOG_HOST, SYSLOG_PORT);
+  UDPAppender udpappender(SYSLOG_HOST, SYSLOG_PORT);
 #else
-  UDPAppenderEspMQTT udpappender(SYSLOG_HOST, 514);
+  UDPAppender udpappender(SYSLOG_HOST, 514);
 #endif
 #endif
 
@@ -159,7 +159,7 @@ void setup()
   Logging::setLevel(esp32m::Info);
   Logging::addAppender(&ETSAppender::instance());
 #ifdef SYSLOG_HOST
-  udpappender.setMode(UDPAppenderEspMQTT::Format::Syslog);
+  udpappender.setMode(UDPAppender::Format::Syslog);
   Logging::addAppender(&udpappender);
 #endif
   Serial.println("added appenders");
