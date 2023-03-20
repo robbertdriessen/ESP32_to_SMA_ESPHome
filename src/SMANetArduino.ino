@@ -60,7 +60,7 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
   }
   else
   {
-    log_i("P wrng dest");
+    log_w("P wrng dest");
     errorCodeVSA = true;
   }
   if (IsPacketForMe())
@@ -70,7 +70,7 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
   }
   else
   {
-    log_i("P wrng snder");
+    log_w("P wrng snder");
     errorCodePIFM = true;
   }
 
@@ -451,14 +451,14 @@ bool validateChecksum()
   {
     if ((level1packet[23 + 1] != 0) || (level1packet[24 + 1] != 0))
     {
-      log_e("chksum err");
+      log_w("chksum err");
       error();
     }
     return true;
   }
   else
   {
-    log_e("Invalid chk= ");
+    log_w("Invalid chk= ");
     Serial.print(F("Invalid chk="));
     Serial.println(FCSChecksum, HEX);
     dumpPacket('R');
@@ -504,7 +504,7 @@ bool ValidateSenderAddress()
 {
   // Compares the SMA inverter address to the "from" address contained in the message.
   // Debug prints "P wrng dest" if there is no match.
-  log_i("Lvel1: %s SMABT: %s ", getMAC(Level1SrcAdd).c_str(), getMAC(smaBTInverterAddressArray).c_str());
+  log_d("Lvel1: %s SMABT: %s ", getMAC(Level1SrcAdd).c_str(), getMAC(smaBTInverterAddressArray).c_str());
 
   bool ret = (Level1SrcAdd[5] == smaBTInverterAddressArray[5] &&
               Level1SrcAdd[4] == smaBTInverterAddressArray[4] &&
@@ -512,7 +512,7 @@ bool ValidateSenderAddress()
               Level1SrcAdd[2] == smaBTInverterAddressArray[2] &&
               Level1SrcAdd[1] == smaBTInverterAddressArray[1] &&
               Level1SrcAdd[0] == smaBTInverterAddressArray[0]);
-  log_i("Sending back: %d", ret);
+  log_d("Sending back: %d", ret);
   return ret;
 }
 

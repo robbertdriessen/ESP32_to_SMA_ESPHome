@@ -32,7 +32,7 @@
 
 #include <logging.hpp>
 #include <ets-appender.hpp>
-#include <udp-appender.hpp>
+#include <udp-appender-espmqtt.hpp>
 
 //missing builtin led 
 #ifndef LED_BUILTIN
@@ -80,9 +80,9 @@ ESP32Time bedTime;
 
 #ifdef SYSLOG_HOST
 #ifdef SYSLOG_PORT
-  UDPAppender udpappender(SYSLOG_HOST, SYSLOG_PORT);
+  UDPAppenderEspMQTT udpappender(SYSLOG_HOST, SYSLOG_PORT);
 #else
-  UDPAppender udpappender(SYSLOG_HOST, 514);
+  UDPAppenderEspMQTT udpappender(SYSLOG_HOST, 514);
 #endif
 #endif
 
@@ -202,8 +202,8 @@ bool getTotalPowerGeneration();
 void onConnectionEstablished()
 {
   client.publish(MQTT_BASE_TOPIC "LWT", "online", true);
-  log_i("WiFi and MQTT connected");
-  log_i("v1 Build d (%s) t (%s) "  ,__DATE__ , __TIME__) ;
+  log_w("WiFi and MQTT connected");
+  log_w("v1 Build d (%s) t (%s) "  ,__DATE__ , __TIME__) ;
 
 #ifdef PUBLISH_HASS_TOPICS
   // client.publish(MQTT_BASE_TOPIC "LWT", "online", true);
@@ -224,9 +224,10 @@ void setup()
 
   Logging::addAppender(&ETSAppender::instance());
 #ifdef SYSLOG_HOST
-  udpappender.setMode(UDPAppender::Format::Syslog);
+  udpappender.setMode(UDPAppenderEspMQTT::Format::Syslog);
   Logging::addAppender(&udpappender);
 #endif
+  Serial.println("added appenders");
 
   // Get the MAC address in reverse order (not sure why, but do it here to make setup easier)
   unsigned char smaSetAddress[6] = {SMA_ADDRESS};
@@ -243,10 +244,8 @@ void setup()
   client.enableHTTPWebUpdater("/update");                               // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overrited with enableHTTPWebUpdater("user", "password").
   client.enableLastWillMessage(MQTT_BASE_TOPIC "LWT", "offline", true); // You can activate the retain flag by setting the third parameter to true
 
-
-
-  log_i("Connected to %s" , SSID);
-  log_i("IP address: %s" , WiFi.localIP().toString().c_str());
+  log_w("Connected to %s" , SSID);
+  log_w("IP address: %s" , WiFi.localIP().toString().c_str());
 
   // Always set time to GMT timezone
   configTime(timeZoneOffset, 0, NTP_SERVER);
@@ -255,7 +254,7 @@ void setup()
   // setupOTAServer();
 
 
-  log_i("hello world!");
+  log_d("hello world!");
 }
 
 void everySecond()
@@ -265,7 +264,7 @@ void everySecond()
 
 void every5Minutes()
 {
-  log_i("every5Minutes()");
+  log_d("every5Minutes()");
   if (client.isConnected())
   {
     client.publish(MQTT_BASE_TOPIC "signal", String(WiFi.RSSI()));
@@ -351,8 +350,8 @@ void loop()
   // Wait for initial NTP sync before setting up inverter
   if (mainstate == MAINSTATE_INIT && ESP32rtc.getEpoch() < AFTER_NOW)
   {
-    log_i("NTP not yet sync'd, sleeping");
-    dodelay(500);
+    log_d("NTP not yet sync'd, sleeping");
+    dodelay(1000);
   }
 
   // Only bother to do anything if we are connected to WiFi and MQTT
@@ -362,7 +361,7 @@ void loop()
   // Run the "main" BT loop
   blinkLed();
 
-  log_i("Loop mainstate: %s", mainstate.toString().c_str());
+  log_d("Loop mainstate: %s", mainstate.toString().c_str());
 
   switch (mainstate)
   {
@@ -798,7 +797,7 @@ bool getDailyYield()
   //We expect a multi packet reply to this question...
   //We ask the inverter for its DAILY yield (generation)
   //once this is returned we can extract the current date/time from the inverter and set our internal clock
-  log_i("getDailyYield(%i)" , innerstate);
+  log_d("getDailyYield(%i)" , innerstate);
 
   switch (innerstate)
   {
@@ -881,7 +880,7 @@ prog_uchar PROGMEM smanet2acspotvalues[] = {
 
 bool getInstantACPower()
 {
-  log_i("getInstantACPower(%i)" , innerstate);
+  log_d("getInstantACPower(%i)" , innerstate);
 
   int32_t thisvalue;
   //Get spot value for instant AC wattage
@@ -947,7 +946,7 @@ bool getTotalPowerGeneration()
   //Gets the total kWh the SMA inverter has generated in its lifetime...
   // debugMsg("getTotalPowerGeneration stage: ");
   // debugMsgLn(String(innerstate));
-  log_i("getTotalPowerGeneration(%i)" , innerstate);
+  log_d("getTotalPowerGeneration(%i)" , innerstate);
 
   switch (innerstate)
   {
