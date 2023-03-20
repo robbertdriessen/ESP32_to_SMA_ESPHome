@@ -11,11 +11,13 @@
 //#define _NewSS_MAX_RX_BUFF 128 // RX buffer size
 
 #include "Arduino.h"
+#include "ESP32_SMA_Inverter.h"
 
 #include <ESP32Time.h>
 #include "time.h"
 #include "bluetooth.h"
 #include "SMANetArduino.h"
+#include "LocalUtil.h"
 #include "mainstate.h"
 
 #include <WiFi.h>
@@ -24,41 +26,18 @@
 #include <Update.h>
 #include "site_details.h"
 
-#include "soc/soc.h"
-#include "soc/rtc_cntl_reg.h"
-
-
 #include "EspMQTTClient.h"
 
 #include <logging.hpp>
 #include <ets-appender.hpp>
 #include <udp-appender-espmqtt.hpp>
 
-//missing builtin led 
-#ifndef LED_BUILTIN
-#define LED_BUILTIN 2
-#endif
 
 // A time in Unix Epoch that is "now" - used to check that the NTP server has
 // sync'd the time correctly before updating the inverter
 #define AFTER_NOW 1630152740
 
-#define MAX_SPOTDC 2000000000
-
 using namespace esp32m;
-
-
-/*
-#define MAINSTATE_INIT 0
-#define MAINSTATE_INIT_SMA_CONNECTION 1
-#define MAINSTATE_LOGON_SMA_INVERTER 2
-#define MAINSTATE_GET_DAILY_YIELD_3 3
-#define MAINSTATE_CHECK_SET_INVERTER_TIME 4
-#define MAINSTATE_GET_INSTANT_AC_POWER 5
-#define MAINSTATE_GET_INSTANT_DC_POWER 6
-#define MAINSTATE_GET_DAILY_YIELD_7 7
-#define MAINSTATE_TOTAL_POWER_GENERATION 8
-*/
 
 EspMQTTClient client = EspMQTTClient(
       SSID,
@@ -92,54 +71,9 @@ ESP32Time bedTime;
 //static time_t SummerStart=1435888800;  //Sunday, 31 March 02:00:00 GMT
 //static time_t SummerEnd=1425952800;  //Sunday, 27 October 02:00:00 GMT
 
-//SMA inverter timezone (note inverter appears ignores summer time saving internally)
-//Need to determine what happens when its a NEGATIVE time zone !
-//Number of seconds for timezone
-//    0=UTC (London)
-//19800=5.5hours Chennai, Kolkata
-//36000=Brisbane (UTC+10hrs)
-#define timeZoneOffset (long)(60 * 60 * TIME_ZONE)
-
-#define NaN_S32 (int32_t)0x80000000  // "Not a Number" representation for LONG (converted to 0 by SBFspot)
-#define NaN_U32 (uint32_t)0xFFFFFFFF // "Not a Number" representation for ULONG (converted to 0 by SBFspot)
 
 
 
-/// Convert a uint64_t (unsigned long long) to a string.
-/// Arduino String/toInt/Serial.print() can't handle printing 64 bit values.
-/// @param[in] input The value to print
-/// @param[in] base The output base.
-/// @returns A String representation of the integer.
-/// @note Based on Arduino's Print::printNumber()
-String uint64ToString(uint64_t input, uint8_t base = 10)
-{
-  String result = "";
-  // prevent issues if called with base <= 1
-  if (base < 2)
-    base = 10;
-  // Check we have a base that we can actually print.
-  // i.e. [0-9A-Z] == 36
-  if (base > 36)
-    base = 10;
-
-  // Reserve some string space to reduce fragmentation.
-  // 16 bytes should store a uint64 in hex text which is the likely worst case.
-  // 64 bytes would be the worst case (base 2).
-  result.reserve(16);
-
-  do
-  {
-    char c = input % base;
-    input /= base;
-
-    if (c < 10)
-      c += '0';
-    else
-      c += 'A' - 10;
-    result = c + result;
-  } while (input);
-  return result;
-}
 
 bool blinklaststate;
 void blinkLed()
@@ -222,6 +156,7 @@ void setup()
 {
   Serial.begin(115200);                      //Serial port for debugging output
 
+  Logging::setLevel(esp32m::Info);
   Logging::addAppender(&ETSAppender::instance());
 #ifdef SYSLOG_HOST
   udpappender.setMode(UDPAppenderEspMQTT::Format::Syslog);
@@ -530,16 +465,7 @@ void loop()
   } // end of while(1)
 } // end of loop()
 
-int32_t get_long(unsigned char *buf)
-{
-  int32_t lng = 0;
 
-  memcpy(&lng, buf, 4);
-
-  if ((lng == (int32_t)NaN_S32) || (lng == (int32_t)NaN_U32))
-    lng = 0;
-  return lng;
-}
 
 //-------------------------------------------------------------------------------------------
 bool checkIfNeedToSetInverterTime()
@@ -855,13 +781,13 @@ bool getDailyYield()
       memcpy(&value64, &level1packet[40 + 8 + 1], 8);
       //0x2622=Day Yield Wh
       // memcpy(&datetime, &level1packet[40 + 4 + 1], 4);
-      datetime = get_long(level1packet + 40 + 1 + 4);
+      datetime = LocalUtil::get_long(level1packet + 40 + 1 + 4);
       // debugMsg("Current Time (epoch): ");
       // debugMsgLn(String(datetime));
 
       //setTime(datetime);
       currentvalue = value64;
-      client.publish(MQTT_BASE_TOPIC "generation_today", uint64ToString(currentvalue), true);
+      client.publish(MQTT_BASE_TOPIC "generation_today", LocalUtil::uint64ToString(currentvalue), true);
       log_i("Day Yield: %f" , (double)value64 / 1000);
 
     }
@@ -918,12 +844,12 @@ bool getInstantACPower()
   case 2:
     //value will contain instant/spot AC power generation along with date/time of reading...
     // memcpy(&datetime, &level1packet[40 + 1 + 4], 4);
-    datetime = get_long(level1packet + 40 + 1 + 4);
-    thisvalue = get_long(level1packet + 40 + 1 + 8);
+    datetime = LocalUtil::get_long(level1packet + 40 + 1 + 4);
+    thisvalue = LocalUtil::get_long(level1packet + 40 + 1 + 8);
     // memcpy(&thisvalue, &level1packet[40 + 1 + 8], 4);
     
     currentvalue = thisvalue;
-    client.publish(MQTT_BASE_TOPIC "instant_ac", uint64ToString(currentvalue), true);
+    client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
 
     log_i("AC Pwr= %li " , thisvalue);
 
@@ -982,7 +908,7 @@ bool getTotalPowerGeneration()
     //digitalClockDisplay(datetime);
     currentvalue = value64;
     log_i("Total Power: %f ", (double)value64 / 1000);
-    client.publish(MQTT_BASE_TOPIC "generation_total", uint64ToString(currentvalue), true);
+    client.publish(MQTT_BASE_TOPIC "generation_total", LocalUtil::uint64ToString(currentvalue), true);
     innerstate++;
     break;
 
@@ -1063,9 +989,9 @@ bool getInstantDCPower()
 
     //spotpowerdc=volts*amps;
 
-    client.publish(MQTT_BASE_TOPIC "instant_dc", uint64ToString(spotpowerdc), true);
-    client.publish(MQTT_BASE_TOPIC "instant_vdc", uint64ToString(spotvoltdc), true);
-    client.publish(MQTT_BASE_TOPIC "instant_adc", uint64ToString(spotampdc), true);
+    client.publish(MQTT_BASE_TOPIC "instant_dc", LocalUtil::uint64ToString(spotpowerdc), true);
+    client.publish(MQTT_BASE_TOPIC "instant_vdc", LocalUtil::uint64ToString(spotvoltdc), true);
+    client.publish(MQTT_BASE_TOPIC "instant_adc", LocalUtil::uint64ToString(spotampdc), true);
 
     log_i("DC Pwr=%lu Volt=%f Amp=%f " , spotpowerdc, spotvoltdc, spotampdc);
 
