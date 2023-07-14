@@ -25,7 +25,7 @@ The image initially needs to be flashed via Serial, update your `platformio.ini`
 
 Once the first image is uploaded, and it's connected to the network, you can update using OTA updades:
 
-- Build the `firmware.bin` file (PlatfromIO Build or pio run)
-- To upload a new firmware, go to http://IPNR/update
+- Build the `firmware.bin` file (PlatfromIO Build or pio run) and flash through serial connection.
+- If the firmware is already loaded, you can update a new firmware by surfing to http://IPNR/update
 
 If you have any questions, please create a GitHub issue and I'll try to help.
