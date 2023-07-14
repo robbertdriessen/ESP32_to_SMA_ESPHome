@@ -927,6 +927,8 @@ prog_uchar PROGMEM smanet2packetdcpower[] = {
     0x83, 0x00, 0x02, 0x80, 0x53, 0x00, 0x00, 0x25, 0x00, 0xFF, 0xFF, 0x25, 0x00};
 bool getInstantDCPower()
 {
+  // 2W - This appears broken...
+  return true;
   log_i("getInstantDCPower(%i)", innerstate);
   //DC
   //We expect a multi packet reply to this question...

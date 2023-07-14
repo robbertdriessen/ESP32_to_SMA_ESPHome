@@ -4,7 +4,7 @@
  */
 
 #include "Arduino.h"
-#include <Time.h>
+#include <time.h>
 #include "BluetoothSerial.h"
 #include <EEPROM.h>
 #include <esp_bt_device.h> // ESP32 BLE

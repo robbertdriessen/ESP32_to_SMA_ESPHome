@@ -14,6 +14,10 @@ All my development and testing was done on an SMA Sunny Boy SB 3000TL-20 (manufa
 All required configuration is done in the `site_details.h` file, to create this, copy the `site_details-example.h` file to `site_details.h` and update all of the constants accordingly.
 
 The project is developed and designed for use in VScode/PlatformIO. It may work in Arduino, but I would _highly_ recommend using PlatformIO as it'll also automatically get the libraries etc that are required.
+*Check out Gitpod, this fork works great on that platform!
+execute "https://github.com/wimpie007/ESP32_to_SMA_ESPHome" in terminal first.
+Then "pio run".
+*
 
 ## Flashing the image
 
