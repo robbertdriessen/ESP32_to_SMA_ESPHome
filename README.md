@@ -26,6 +26,6 @@ The image initially needs to be flashed via Serial, update your `platformio.ini`
 Once the first image is uploaded, and it's connected to the network, you can update using OTA updades:
 
 - Build the `firmware.bin` file (PlatfromIO Build or pio run)
-- Run `curl` to upload the new file, for example: `curl -F "image=@.pio/build/lolin_d32/firmware.bin" http://1.2.3.4/update`
+- To upload a new firmware, go to http://IPNR/update
 
 If you have any questions, please create a GitHub issue and I'll try to help.

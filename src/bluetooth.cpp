@@ -58,7 +58,7 @@ bool BTStart()
   if (SerialBT.connected(1))
   {
     btstate = STATE_CONNECTED;
-    log_w("Connected succesfully!");
+    log_w("Bluetooth connected succesfully!");
     return true;
   }
   else
