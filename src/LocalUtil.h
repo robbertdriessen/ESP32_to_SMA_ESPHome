@@ -1,7 +1,7 @@
 #ifndef LOCALUTIL_H
 #define LOCALUTIL_H
 
-#include <arduino.h>
+#include <Arduino.h>
 
 #define NaN_S32 (int32_t)0x80000000  // "Not a Number" representation for LONG (converted to 0 by SBFspot)
 #define NaN_U32 (uint32_t)0xFFFFFFFF // "Not a Number" representation for ULONG (converted to 0 by SBFspot)

@@ -35,7 +35,7 @@
 
 // A time in Unix Epoch that is "now" - used to check that the NTP server has
 // sync'd the time correctly before updating the inverter
-#define AFTER_NOW 1630152740
+#define AFTER_NOW  1630152740 // 2319321600
 
 using namespace esp32m;
 
@@ -133,7 +133,7 @@ void onConnectionEstablished()
 {
   client.publish(MQTT_BASE_TOPIC "LWT", "online", true);
   log_w("WiFi and MQTT connected");
-  log_w("v1 Build d (%s) t (%s) "  ,__DATE__ , __TIME__) ;
+  log_w("v1 Build 2w d (%s) t (%s) "  ,__DATE__ , __TIME__) ;
 
 #ifdef PUBLISH_HASS_TOPICS
   // client.publish(MQTT_BASE_TOPIC "LWT", "online", true);
@@ -180,7 +180,8 @@ void setup()
 
   // Always set time to GMT timezone
   configTime(timeZoneOffset, 0, NTP_SERVER);
-
+  log_w("2W Connected to %s" , SSID);
+  
   Logging::hookUartLogger();
   // setupOTAServer();
 
@@ -280,9 +281,13 @@ void loop()
 
   // Wait for initial NTP sync before setting up inverter
   if (mainstate == MAINSTATE_INIT && ESP32rtc.getEpoch() < AFTER_NOW)
-  {
+  { configTime(timeZoneOffset, 0, NTP_SERVER); // just added configtime multiple times to make this work. Not a nice workaround...
+
     log_d("NTP not yet sync'd, sleeping");
-    dodelay(1000);
+    log_w("NTP not yes sync'd, sleeping 10s");
+    dodelay(10000);
+    configTime(timeZoneOffset, 0, NTP_SERVER);
+
   }
 
   // Only bother to do anything if we are connected to WiFi and MQTT
@@ -927,6 +932,8 @@ prog_uchar PROGMEM smanet2packetdcpower[] = {
     0x83, 0x00, 0x02, 0x80, 0x53, 0x00, 0x00, 0x25, 0x00, 0xFF, 0xFF, 0x25, 0x00};
 bool getInstantDCPower()
 {
+  // 2W - This appears broken...
+  return true;
   log_i("getInstantDCPower(%i)", innerstate);
   //DC
   //We expect a multi packet reply to this question...

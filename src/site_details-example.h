@@ -18,7 +18,7 @@
 #define PASSWORD "xxx"
 
 // Timezone offset from GMT in hours
-#define TIME_ZONE 10
+#define TIME_ZONE 2
 
 // MQTT server hostname/IP address
 #define MQTT_SERVER "mqtt.server"
@@ -34,7 +34,7 @@
 
 
 // NTP server(s), at least one must be configured
-#define NTP_SERVER "ntp.pool.org"
+#define NTP_SERVER "pool.ntp.org"
 #define NTP_SERVER2 NULL
 #define NTP_SERVER3 NULL
 
