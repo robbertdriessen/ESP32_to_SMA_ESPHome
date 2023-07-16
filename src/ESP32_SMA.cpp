@@ -353,7 +353,7 @@ void loop()
     {
       mainstate++;
       innerstate = 0;
-    }
+    } 
     break;
 
   case MAINSTATE_GET_INSTANT_DC_POWER: //6:
@@ -361,7 +361,7 @@ void loop()
     {
       mainstate++;
       innerstate = 0;
-    }
+    } 
     break;
 
   case MAINSTATE_GET_DAILY_YIELD_7:// 7:
@@ -933,7 +933,9 @@ prog_uchar PROGMEM smanet2packetdcpower[] = {
 bool getInstantDCPower()
 {
   // 2W - This appears broken...
+#ifndef FETCH_DC_INSTANT_POWER
   return true;
+#else
   log_i("getInstantDCPower(%i)", innerstate);
   //DC
   //We expect a multi packet reply to this question...
@@ -1011,6 +1013,7 @@ bool getInstantDCPower()
   }
 
   return false;
+#endif
 }
 
 /*

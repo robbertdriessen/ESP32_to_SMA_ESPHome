@@ -49,4 +49,8 @@
 // published via MQTT to allow auto discovery.
 #define PUBLISH_HASS_TOPICS
 
+//uncomment this to enable dc power fetching
+//this allows calculation of efficiency dc / ac
+//#define FETCH_DC_INSTANT_POWER
+
 #endif /* SITE_DETAILS_H_ */
