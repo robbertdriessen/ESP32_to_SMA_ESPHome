@@ -936,7 +936,7 @@ bool getInstantDCPower()
 #ifndef FETCH_DC_INSTANT_POWER
   return true;
 #else
-  log_i("getInstantDCPower(%i)", innerstate);
+  log_d("getInstantDCPower(%i)", innerstate);
   //DC
   //We expect a multi packet reply to this question...
 
