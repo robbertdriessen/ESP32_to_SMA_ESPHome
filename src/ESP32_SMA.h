@@ -59,8 +59,8 @@ class ESP32_SMA : public ESP32Loggable {
         bool blinklaststate;
 
         EspMQTTClient mqttclient = EspMQTTClient(
-            SSID,
-            PASSWORD,
+            WIFI_SSID,
+            WIFI_PASSWORD,
             MQTT_SERVER,
             MQTT_USER, // Can be omitted if not needed
             MQTT_PASS, // Can be omitted if not needed

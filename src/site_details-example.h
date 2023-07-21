@@ -14,8 +14,8 @@
 #define SMA_ADDRESS 0x00, 0x80, 0x25, 0x00, 0x11, 0x22
 
 // WiFi details
-#define SSID "xxx"
-#define PASSWORD "xxx"
+#define WIFI_SSID "xxx"
+#define WIFI_PASSWORD "xxx"
 
 // Timezone offset from GMT in hours
 #define TIME_ZONE 2

@@ -131,12 +131,12 @@ void ESP32_SMA::setup()
   mqttclient.enableHTTPWebUpdater("/update");                               // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overrited with enableHTTPWebUpdater("user", "password").
   mqttclient.enableLastWillMessage(MQTT_BASE_TOPIC "LWT", "offline", true); // You can activate the retain flag by setting the third parameter to true
 
-  logW("Connected to %s" , SSID);
+  logW("Connected to %s" , WIFI_SSID);
   logW("IP address: %s" , WiFi.localIP().toString().c_str());
 
   // Always set time to GMT timezone
   configTime(timeZoneOffset, 0, NTP_SERVER);
-  logW("2W Connected to %s" , SSID);
+  logW("2W Connected to %s" , WIFI_SSID);
   
   Logging::hookUartLogger();
 //  setupOTAServer();
