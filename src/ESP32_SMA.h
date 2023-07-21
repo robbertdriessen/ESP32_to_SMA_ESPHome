@@ -1,6 +1,17 @@
 #ifndef ESP32_SMA_H
 #define ESP32_SMA_H
 
+#include <ESP32Time.h>
+#include "EspMQTTClient.h"
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
+#include <Update.h>
+
+#include "site_details.h"
+#include "ESP32_SMA_Inverter.h"
+
+#include "ESP32Loggable.h"
 
 //missing builtin led 
 #ifndef LED_BUILTIN
@@ -26,36 +37,63 @@
 
 
 
-class ESP32_SMA {
+class ESP32_SMA : public ESP32Loggable {
     public:
+         ESP32_SMA() : ESP32Loggable("ESP32_SMA") {}
 
-    private:
-};
+        void onConnectionEstablished();
+        void setup();
+        void loop();
+
+        void everySecond();
+        void every5Minutes();
+        void everyHour();
+        void everyDay();
+        void dodelay(unsigned long duration);
 
 // Function Prototypes
-    void blinkLed();
-    void blinkLedOff();
+        void blinkLed();
+        void blinkLedOff();
 
-    bool initialiseSMAConnection();
-    bool logonSMAInverter();
-    bool checkIfNeedToSetInverterTime();
-    void setInverterTime();
+    private:
+        bool blinklaststate;
 
-    bool getInstantACPower();
-    bool getTotalPowerGeneration();
-    bool getInstantDCPower();
+        EspMQTTClient mqttclient = EspMQTTClient(
+            SSID,
+            PASSWORD,
+            MQTT_SERVER,
+            MQTT_USER, // Can be omitted if not needed
+            MQTT_PASS, // Can be omitted if not needed
+            HOST);
 
-    bool getDailyYield();
+        ESP32_SMA_Inverter smaInverter = ESP32_SMA_Inverter(mqttclient);
+
+        ESP32Time ESP32rtc;     // Time structure. Holds what time the ESP32 thinks it is.
+        ESP32Time nextMidnight; // Create a time structure to hold the answer to "What time (in time_t seconds) is the upcoming midnight?"
+
+        // "datetime" stores the number of seconds since the epoch (normally 01/01/1970), AS RETRIEVED
+        //     from the SMA. The value is updated when data is read from the SMA, like when
+        //     getInstantACPower() is called.
+        //static unsigned long datetime=0;   // stores the number of seconds since the epoch (normally 01/01/1970)
+        time_t datetime = 0;
+        unsigned long sleepuntil = 0;
+        unsigned long nextSecond = 0;
+        unsigned long next5Minute = 0;
+        unsigned long nextHour = 0;
+        unsigned long nextDay = 0;
+        int thisminute = -1;
+        int checkbtminute = -1;
 
 
-    void onConnectionEstablished();
+        const unsigned long seventy_years = 2208988800UL;
 
-    void everySecond();
-    void every5Minutes();
-    void everyHour();
-    void everyDay();
 
-    void dodelay(unsigned long duration);
+};
+
+
+
+
+
 
 
 
