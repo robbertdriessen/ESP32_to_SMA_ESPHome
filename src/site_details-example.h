@@ -30,7 +30,7 @@
 #define MQTT_PASS "mqtt-pass-123" // change me please
 
 //Password needs to be 12 bytes long, with zeros as trailing bytes (Assume SMA INVERTER PIN code is 0000)
-#define SMA_INVERTER_USER_PASSCODE '0', '0', '0', '0', 0, 0, 0, 0, 0, 0, 0, 0
+#define SMA_INVERTER_USER_PASSCODE {'0', '0', '0', '0', 0, 0, 0, 0, 0, 0, 0, 0}
 
 
 // NTP server(s), at least one must be configured
