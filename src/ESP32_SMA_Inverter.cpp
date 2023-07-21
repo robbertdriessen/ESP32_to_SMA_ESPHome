@@ -227,7 +227,7 @@ bool ESP32_SMA_Inverter::getDailyYield()
 
       //setTime(datetime);
       currentvalue = value64;
-      log_i("Day Yield: %f" , (double)value64 / 1000);
+      logI("Day Yield: %f" , (double)value64 / 1000);
       _client.publish(MQTT_BASE_TOPIC "generation_today", LocalUtil::uint64ToString(currentvalue), true);
 
 
@@ -296,7 +296,7 @@ bool ESP32_SMA_Inverter::getInstantACPower()
     // memcpy(&thisvalue, &level1packet[40 + 1 + 8], 4);
     
     currentvalue = thisvalue;
-    log_i("AC Pwr= %li " , thisvalue);
+    logI("AC Pwr= %li " , thisvalue);
     _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
 
     spotpowerac = thisvalue;
@@ -353,7 +353,7 @@ bool ESP32_SMA_Inverter::getTotalPowerGeneration()
     memcpy(&value64, &level1packet[40 + 1 + 8], 8);
     //digitalClockDisplay(datetime);
     currentvalue = value64;
-    log_i("Total Power: %f ", (double)value64 / 1000);
+    logI("Total Power: %f ", (double)value64 / 1000);
     //reportValue(MQTT_BASE_TOPIC "generation_total", LocalUtil::uint64ToString(currentvalue), true);
     _client.publish(MQTT_BASE_TOPIC "generation_total", LocalUtil::uint64ToString(currentvalue), true);
     innerstate++;
@@ -413,7 +413,7 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       memcpy(&value, &level1packet[i + 8], 4);
 
       //valuetype
-      log_d("getInstantDCPower(): valuetype: %li value: %lu ", valuetype, value);
+      logD("getInstantDCPower(): valuetype: %li value: %lu ", valuetype, value);
 
       //0x451f=DC Voltage  /100
       //0x4521=DC Current  /1000
@@ -434,7 +434,7 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
     }
 
     //spotpowerdc=volts*amps;
-    log_i("DC Pwr=%lu Volt=%f Amp=%f " , spotpowerdc, spotvoltdc, spotampdc);
+    logI("DC Pwr=%lu Volt=%f Amp=%f " , spotpowerdc, spotvoltdc, spotampdc);
 
     _client.publish(MQTT_BASE_TOPIC "instant_dc", LocalUtil::uint64ToString(spotpowerdc), true);
     _client.publish(MQTT_BASE_TOPIC "instant_vdc", LocalUtil::uint64ToString(spotvoltdc), true);
