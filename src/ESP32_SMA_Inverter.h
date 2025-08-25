@@ -38,6 +38,11 @@ using namespace esp32m;
 // max spot dc watt value, ignore if higher
 #define MAX_SPOTDC 2000000000
 
+// Normal metrics publish interval (ms) fallback if not defined elsewhere
+#ifndef METRIC_UPDATE_MS
+#define METRIC_UPDATE_MS 10000UL
+#endif
+
 #define INIT_smanet2packetx80x00x02x00 {0x80, 0x00, 0x02, 0x00}
 //size_t sizeof_smanet2packetx80x00x02x00 = sizeof(INIT_smanet2packetx80x00x02x00);
 

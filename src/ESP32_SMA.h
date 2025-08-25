@@ -31,6 +31,11 @@
 // max spot dc watt value, ignore if higher
 #define MAX_SPOTDC 2000000000
 
+// Normal metrics publish interval (ms). Can be overridden via build flags or site_details.h
+#ifndef METRIC_UPDATE_MS
+#define METRIC_UPDATE_MS 10000UL
+#endif
+
 //Do we switch off upload to sites when its dark?
 #undef allowsleep
 //#define allowsleep

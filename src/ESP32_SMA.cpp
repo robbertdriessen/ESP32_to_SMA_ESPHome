@@ -379,7 +379,7 @@ void ESP32_SMA::loop()
   default:
     mainstate = MAINSTATE_GET_INSTANT_AC_POWER;
     smaInverter.resetInnerstate();
-  dodelay(5000); // Update every 5 seconds for steadier updates
+  dodelay(METRIC_UPDATE_MS); // Update cadence for normal metrics
   }
   return;
 

@@ -266,6 +266,7 @@ bool ESP32_SMA_Inverter::getInstantACPower()
   logD("getInstantACPower(%i)" , innerstate);
 
   int32_t thisvalue;
+  static unsigned long lastPublish = 0;
   //Get spot value for instant AC wattage
   // debugMsg("getInstantACPower stage: ");
   // debugMsgLn(String(innerstate));
@@ -311,7 +312,10 @@ bool ESP32_SMA_Inverter::getInstantACPower()
     
     currentvalue = thisvalue;
     logI("AC Pwr= %li " , thisvalue);
-    _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
+    if (millis() - lastPublish >= METRIC_UPDATE_MS) {
+      _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
+      lastPublish = millis();
+    }
 
     spotpowerac = thisvalue;
 
@@ -392,6 +396,7 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
   logD("getInstantDCPower(%i)", innerstate);
   //DC
   //We expect a multi packet reply to this question...
+  static unsigned long lastPublish = 0;
 
   switch (innerstate)
   {
@@ -456,9 +461,12 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
     //spotpowerdc=volts*amps;
     logI("DC Pwr=%lu Volt=%f Amp=%f " , spotpowerdc, spotvoltdc, spotampdc);
 
-    _client.publish(MQTT_BASE_TOPIC "instant_dc", LocalUtil::uint64ToString(spotpowerdc), true);
-    _client.publish(MQTT_BASE_TOPIC "instant_vdc", LocalUtil::uint64ToString(spotvoltdc), true);
-    _client.publish(MQTT_BASE_TOPIC "instant_adc", LocalUtil::uint64ToString(spotampdc), true);
+    if (millis() - lastPublish >= METRIC_UPDATE_MS) {
+      _client.publish(MQTT_BASE_TOPIC "instant_dc", LocalUtil::uint64ToString(spotpowerdc), true);
+      _client.publish(MQTT_BASE_TOPIC "instant_vdc", LocalUtil::uint64ToString(spotvoltdc), true);
+      _client.publish(MQTT_BASE_TOPIC "instant_adc", LocalUtil::uint64ToString(spotampdc), true);
+      lastPublish = millis();
+    }
 
     innerstate++;
     break;
