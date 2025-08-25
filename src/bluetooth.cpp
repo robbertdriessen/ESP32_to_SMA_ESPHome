@@ -35,6 +35,7 @@ uint8_t btstate = STATE_FRESH;
 unsigned char smaBTInverterAddressArray[6] = {};
 
 unsigned char myBTAddress[6] = {}; // BT address of ESP32.
+volatile bool btTimedOut = false;
 
 
 
@@ -44,6 +45,9 @@ bool BTStart()
 {
   log_d("BTStart(%i)", btstate);
 
+  static unsigned long lastAttempt = 0;
+  const unsigned long retryIntervalMs = 10000; // 10s between connect attempts
+
   if (btstate == STATE_FRESH)
   {
     SerialBT.begin("ESP32test", true); // "true" creates this device as a BT Master.
@@ -52,7 +56,19 @@ bool BTStart()
     const uint8_t *addr = esp_bt_dev_get_address();
     log_d("My BT Address: %s  SMA BT Address (reversed): %s ", getDeviceAddress(addr).c_str(), getDeviceAddress(smaBTInverterAddressArray).c_str()) ;
     log_d("The SM32 started in master mode. Now trying to connect to SMA inverter.");
-    SerialBT.connect(address);
+    lastAttempt = 0; // force immediate attempt below
+    btstate = STATE_SETUP;
+  }
+
+  // Attempt connection if not connected
+  if (!SerialBT.connected(0))
+  {
+    if (millis() - lastAttempt > retryIntervalMs)
+    {
+      log_i("Attempting BT connect...");
+      SerialBT.connect(address);
+      lastAttempt = millis();
+    }
   }
 
   if (SerialBT.connected(1))
@@ -64,7 +80,7 @@ bool BTStart()
   else
   {
     btstate = STATE_SETUP;
-    log_e("Failed to connect. Make sure remote device is available and in range, then restart app.");
+    // transient failure, keep retrying
     return false;
   }
 }
@@ -155,38 +171,34 @@ bool readArrayFromEEPROM(unsigned char readbuffer[], int length, int EEPROMoffse
 
 unsigned char getByte()
 {
-  //Returns a single byte from the bluetooth stream (with error timeout/reset)
-  unsigned long time;
-  int inInt = 0; // ESP32 SerialBT.read() returns an int, not a char.
-
-  //Max wait 60 seconds, before throwing an fatal error
-  time = 60000 + millis();
+  // Returns a single byte from the bluetooth stream (with error timeout)
+  // Do NOT restart the ESP on timeout; return 0xFF as a sentinel so callers can abort gracefully.
+  const unsigned long maxWaitMs = 5000; // 5s per byte should be plenty; keeps main loop responsive
+  const unsigned long start = millis();
+  int inInt = -1; // ESP32 SerialBT.read() returns an int
 
   while (!SerialBT.available())
   {
-    delay(5); //Wait for BT byte to arrive
-    if (millis() > time)
+    delay(2); // small wait for BT byte to arrive
+    if ((millis() - start) > maxWaitMs)
     {
-      log_w("Timeout");
-      error();
+      log_w("BT getByte timeout");
+      btTimedOut = true;
+      return 0; // value ignored by caller when btTimedOut is set
     }
   }
 
-  //if( (millis() - charTime) > 1 ) Serial.println(); // Breaks up SMA's messages into lines.
   inInt = SerialBT.read();
-  charTime = millis(); // Used to detect a gap between messages (so can print \r\n).
+  charTime = millis();
 
   if (inInt == -1)
   {
-    log_e("ERROR: Asked for a BT char when there was none to get.");
-    return '!';
+    log_w("BT read returned -1");
+    btTimedOut = true;
+    return 0;
   }
-  else
-  {
-    //Serial.print( (unsigned char)inInt, HEX );
-    //Serial.print(' ');
-    return (unsigned char)inInt;
-  }
+  btTimedOut = false;
+  return (unsigned char)inInt;
 }
 
 void convertBTADDRStringToArray(char *tempbuf, unsigned char *outarray, char match)

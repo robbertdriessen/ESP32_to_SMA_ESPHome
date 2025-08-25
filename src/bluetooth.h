@@ -28,6 +28,7 @@ void sendPacket(unsigned char *btbuffer);
 void writeArrayIntoEEPROM(unsigned char readbuffer[], int length, int EEPROMoffset);
 bool readArrayFromEEPROM(unsigned char readbuffer[], int length, int EEPROMoffset);
 unsigned char getByte();
+extern volatile bool btTimedOut;
 void convertBTADDRStringToArray(char *tempbuf, unsigned char *outarray, char match);
 int hex2bin(const char *s);
 

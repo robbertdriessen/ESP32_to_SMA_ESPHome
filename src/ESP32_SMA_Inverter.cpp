@@ -55,6 +55,10 @@ bool ESP32_SMA_Inverter::initialiseSMAConnection()
     cmdcode = readLevel1PacketFromBluetoothStream(0);
     if ((cmdcode == 0x000c) || (cmdcode == 0x0005))
       innerstate++;
+    else if (cmdcode == 0xFFFF) {
+      // transient failure, retry from case 2 next loop
+      innerstate = 2;
+    }
     break;
 
   case 4:
@@ -87,6 +91,9 @@ bool ESP32_SMA_Inverter::initialiseSMAConnection()
     {
       innerstate++;
       packet_send_counter++;
+    }
+    else if (cmdcode == 0xFFFF) {
+      innerstate = 5; // retry sending first packet
     }
     break;
 
@@ -146,6 +153,9 @@ bool ESP32_SMA_Inverter::logonSMAInverter()
     {
       innerstate++;
       packet_send_counter++;
+    }
+    else if (cmdcode == 0xFFFF) {
+      innerstate = 6; // retry
     }
     break;
 
@@ -286,6 +296,10 @@ bool ESP32_SMA_Inverter::getInstantACPower()
       else
         innerstate = 0;
     }
+    else {
+      // timeout, retry request next loop
+      innerstate = 0;
+    }
     break;
 
   case 2:
@@ -345,6 +359,9 @@ bool ESP32_SMA_Inverter::getTotalPowerGeneration()
       else
         innerstate = 0;
     }
+    else {
+      innerstate = 0;
+    }
     break;
 
   case 2:
@@ -402,6 +419,9 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       }
       else
         innerstate = 0;
+    }
+    else {
+      innerstate = 0;
     }
     break;
 
@@ -691,6 +711,9 @@ bool ESP32_SMA_Inverter::getGridFrequency()
       }
       else
         innerstate = 0;
+    }
+    else {
+      innerstate = 0;
     }
     break;
 

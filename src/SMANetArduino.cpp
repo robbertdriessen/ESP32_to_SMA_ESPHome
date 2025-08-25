@@ -72,14 +72,24 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
   //level1packet={0};
 
   //Wait for a start packet byte
-  while (getByte() != '\x7e')
-  {
-    delay(1);
-  }
+  // Wait for a start packet byte with a bounded wait; abort on timeout
+  unsigned long startWait = millis();
+  unsigned char b = 0x00;
+  do {
+    b = getByte();
+    if (btTimedOut) { // timeout from getByte
+      log_w("Timeout waiting for start byte");
+      return 0xFFFF;
+    }
+  } while (b != '\x7e');
 
   byte len1 = getByte();
   byte len2 = getByte();
   byte packetchecksum = getByte();
+  if (btTimedOut) {
+    log_w("Timeout reading header");
+    return 0xFFFF;
+  }
 
   if ((0x7e ^ len1 ^ len2) == packetchecksum)
     errorCodePCS = false;
@@ -89,12 +99,23 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
     errorCodePCS = true;
   }
 
-  for (int i = 0; i < 6; i++)
-    Level1SrcAdd[i] = getByte();
-  for (int i = 0; i < 6; i++)
-    Level1DestAdd[i] = getByte();
+  for (int i = 0; i < 6; i++) {
+    unsigned char v = getByte();
+    if (btTimedOut) { log_w("Timeout src addr"); return 0xFFFF; }
+    Level1SrcAdd[i] = v;
+  }
+  for (int i = 0; i < 6; i++) {
+    unsigned char v = getByte();
+    if (btTimedOut) { log_w("Timeout dst addr"); return 0xFFFF; }
+    Level1DestAdd[i] = v;
+  }
 
-  retcmdcode = getByte() + (getByte() * 256);
+  {
+    unsigned char c1 = getByte();
+    unsigned char c2 = getByte();
+  if (btTimedOut) { log_w("Timeout reading cmd code"); return 0xFFFF; }
+    retcmdcode = c1 + (c2 * 256);
+  }
   packetlength = len1 + (len2 * 256);
   //Serial.println(" ");
   //Serial.print("packetlength = ");
@@ -133,7 +154,9 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
     //Serial.print( " index = " );
     //Serial.print( index );
     //Serial.print( " " );
-    level1packet[index] = getByte();
+  unsigned char vb = getByte();
+  if (btTimedOut) { log_w("Timeout reading body"); return 0xFFFF; }
+  level1packet[index] = vb;
 
     //Keep 1st byte raw unescaped 0x7e
     //if (i>0) {
@@ -464,10 +487,9 @@ bool validateChecksum()
   if (!containsLevel2Packet())
   {
     //Wrong packet index received
-    //Serial.println("*** in validateChecksum(). containsLevel2Packet() returned FALSE.");
-    dumpPacket('R');
-
-    Serial.print(F("Wrng L2 hdr"));
+  // Wrong packet index received
+  // dumpPacket('R');
+  log_w("Wrong L2 header");
     return false;
   }
   //Serial.println("*** in validateChecksum(). containsLevel2Packet() returned TRUE.");
@@ -476,11 +498,8 @@ bool validateChecksum()
   if (level1packet[28 - 1] != lastpacketindex)
   {
     //Wrong packet index received
-    dumpPacket('R');
-
-    Serial.print(F("Wrng Pkg count="));
-    Serial.println(level1packet[28 - 1], HEX);
-    Serial.println(lastpacketindex, HEX);
+  // dumpPacket('R');
+  log_w("Wrong Pkg count recv=%02X exp=%02X", level1packet[28 - 1], lastpacketindex);
     return false;
   }
 
@@ -505,11 +524,9 @@ bool validateChecksum()
   }
   else
   {
-    log_w("Invalid chk= ");
-    Serial.print(F("Invalid chk="));
-    Serial.println(FCSChecksum, HEX);
-    dumpPacket('R');
-    delay(10000);
+  log_w("Invalid checksum %04X", FCSChecksum);
+  // dumpPacket('R');
+  // don't stall for 10s; let caller retry
     return false;
   }
 }

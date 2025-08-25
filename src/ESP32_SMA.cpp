@@ -147,11 +147,22 @@ void ESP32_SMA::setup()
 
 
   logD("hello world!");
+
+  // Initialize scheduled timers to avoid long initial gaps
+  nextSecond = millis() + 1000;
+  next5Minute = millis() + 30000; // first 5-min tick after 30s
+  nextHour = millis() + 5 * 60 * 1000; // first hour tick after 5 min
+  nextDay = millis() + 60 * 60 * 1000; // first day tick after 1 hour
 }
 
 void ESP32_SMA::everySecond()
 {
   blinkLedOff();
+  static uint32_t hb = 0;
+  hb++;
+  if ((hb % 30) == 0 && mqttclient.isConnected()) {
+    mqttclient.publish(MQTT_BASE_TOPIC "uptime_sec", String(ESP32rtc.getEpoch()), false);
+  }
 }
 
 void ESP32_SMA::every5Minutes()
@@ -225,19 +236,12 @@ void ESP32_SMA::loop()
     return;
 
   // if in the main loop, only run at the top of the minute
-  if (mainstate >= MAINSTATE_GET_INSTANT_AC_POWER)
-  {
-    getLocalTime(&timeinfo);
-    if (timeinfo.tm_min == thisminute)
-      return;
-
-    
-    // Check we are connected to BT, if not, restart process
-    if (!BTCheckConnected())
-    {
-      mainstate = MAINSTATE_INIT;
-    }
-  }
+  // if (mainstate >= MAINSTATE_GET_INSTANT_AC_POWER)
+  // {
+  //   getLocalTime(&timeinfo);
+  //   if (timeinfo.tm_min == thisminute)
+  //     return;
+  // }
 
   // Wait for initial NTP sync before setting up inverter
   if (mainstate == MAINSTATE_INIT && ESP32rtc.getEpoch() < AFTER_NOW)
@@ -375,7 +379,7 @@ void ESP32_SMA::loop()
   default:
     mainstate = MAINSTATE_GET_INSTANT_AC_POWER;
     smaInverter.resetInnerstate();
-    thisminute = timeinfo.tm_min;
+  dodelay(5000); // Update every 5 seconds for steadier updates
   }
   return;
 

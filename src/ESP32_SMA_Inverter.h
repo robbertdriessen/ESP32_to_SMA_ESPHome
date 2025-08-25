@@ -90,7 +90,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
             smanet2packet_logon INIT_smanet2packet_logon,
             smanet2acspotvalues INIT_smanet2acspotvalues,
             smanet2packetdcpower INIT_smanet2packetdcpower,
-            smanet2settime INIT_smanet2acspotvalues,
+            smanet2settime INIT_smanet2settime,
             smanet2totalyieldWh INIT_smanet2totalyieldWh,
             smanet2gridfrequency INIT_smanet2gridfrequency,
             smanet2gridvoltage INIT_smanet2gridvoltage,
