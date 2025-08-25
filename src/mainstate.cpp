@@ -48,6 +48,18 @@ String MainState::toString() const {
             case MAINSTATE_TOTAL_POWER_GENERATION :
                 return "TotalPowerGeneration";
             break;
+            case MAINSTATE_GET_GRID_FREQUENCY :
+                return "GetGridFrequency";
+            break;
+            case MAINSTATE_GET_GRID_VOLTAGE :
+                return "GetGridVoltage";
+            break;
+            case MAINSTATE_GET_INVERTER_TEMPERATURE :
+                return "GetInverterTemperature";
+            break;
+            case MAINSTATE_GET_MAX_POWER_TODAY :
+                return "GetMaxPowerToday";
+            break;
             case MAINSTATE_HIGH_LOOP :
                 return "Highloop";
             break;

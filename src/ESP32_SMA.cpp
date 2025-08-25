@@ -96,6 +96,10 @@ void ESP32_SMA::onConnectionEstablished()
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_dc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Power\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_dc\", \"unique_id\": \"" HOST "-instant_dc\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Voltage\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc\", \"unique_id\": \"" HOST "-instant_vdc\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_adc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Ampere\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_adc\", \"unique_id\": \"" HOST "-instant_adc\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/grid_frequency/config", "{\"name\": \"" FRIENDLY_NAME " Grid Frequency\", \"device_class\": \"frequency\", \"state_topic\": \"" MQTT_BASE_TOPIC "grid_frequency\", \"unique_id\": \"" HOST "-grid_frequency\", \"unit_of_measurement\": \"Hz\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/grid_voltage/config", "{\"name\": \"" FRIENDLY_NAME " Grid Voltage\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "grid_voltage\", \"unique_id\": \"" HOST "-grid_voltage\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/inverter_temp/config", "{\"name\": \"" FRIENDLY_NAME " Inverter Temperature\", \"device_class\": \"temperature\", \"state_topic\": \"" MQTT_BASE_TOPIC "inverter_temp\", \"unique_id\": \"" HOST "-inverter_temp\", \"unit_of_measurement\": \"°C\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/max_power_today/config", "{\"name\": \"" FRIENDLY_NAME " Max Power Today\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "max_power_today\", \"unique_id\": \"" HOST "-max_power_today\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
 
 #endif // PUBLISH_HASS_TOPICS
 }
@@ -330,6 +334,38 @@ void ESP32_SMA::loop()
 
   case MAINSTATE_TOTAL_POWER_GENERATION: //8:
     if (smaInverter.getTotalPowerGeneration())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_GRID_FREQUENCY: //9:
+    if (smaInverter.getGridFrequency())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_GRID_VOLTAGE: //10:
+    if (smaInverter.getGridVoltage())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_INVERTER_TEMPERATURE: //11:
+    if (smaInverter.getInverterTemperature())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_MAX_POWER_TODAY: //12:
+    if (smaInverter.getMaxPowerToday())
     {
       mainstate++;
       smaInverter.resetInnerstate();

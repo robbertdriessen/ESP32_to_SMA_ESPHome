@@ -664,3 +664,219 @@ void ESP32_SMA_Inverter::setInverterTime()
   //debugMsgln(" done");
 }
 
+bool ESP32_SMA_Inverter::getGridFrequency()
+{
+  logD("getGridFrequency(%i)", innerstate);
+  
+  switch (innerstate)
+  {
+  case 0:
+    writePacketHeader(level1packet);
+    writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2gridfrequency, sizeof(smanet2gridfrequency));
+    writeSMANET2PlusPacketTrailer(level1packet);
+    writePacketLength(level1packet);
+    sendPacket(level1packet);
+    innerstate++;
+    break;
+
+  case 1:
+    if (waitForMultiPacket(0x0001))
+    {
+      if (validateChecksum())
+      {
+        packet_send_counter++;
+        innerstate++;
+      }
+      else
+        innerstate = 0;
+    }
+    break;
+
+  case 2:
+    // Extract grid frequency (value type 0x4648)
+    for (int i = 40 + 1; i < packetposition - 3; i += 28)
+    {
+      valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+      memcpy(&value, &level1packet[i + 8], 4);
+      
+      if (valuetype == 0x4648) // Grid frequency
+      {
+        gridfrequency = (float)value / 100.0; // Frequency in Hz
+        logI("Grid Freq: %f Hz", gridfrequency);
+        _client.publish(MQTT_BASE_TOPIC "grid_frequency", String(gridfrequency), true);
+        break;
+      }
+    }
+    innerstate++;
+    break;
+
+  default:
+    return true;
+  }
+  return false;
+}
+
+bool ESP32_SMA_Inverter::getGridVoltage()
+{
+  logD("getGridVoltage(%i)", innerstate);
+  
+  switch (innerstate)
+  {
+  case 0:
+    writePacketHeader(level1packet);
+    writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2gridvoltage, sizeof(smanet2gridvoltage));
+    writeSMANET2PlusPacketTrailer(level1packet);
+    writePacketLength(level1packet);
+    sendPacket(level1packet);
+    innerstate++;
+    break;
+
+  case 1:
+    if (waitForMultiPacket(0x0001))
+    {
+      if (validateChecksum())
+      {
+        packet_send_counter++;
+        innerstate++;
+      }
+      else
+        innerstate = 0;
+    }
+    break;
+
+  case 2:
+    // Extract grid voltage (value type 0x4664)
+    for (int i = 40 + 1; i < packetposition - 3; i += 28)
+    {
+      valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+      memcpy(&value, &level1packet[i + 8], 4);
+      
+      if (valuetype == 0x4664) // Grid voltage
+      {
+        gridvoltage = (float)value / 100.0; // Voltage in V
+        logI("Grid Voltage: %f V", gridvoltage);
+        _client.publish(MQTT_BASE_TOPIC "grid_voltage", String(gridvoltage), true);
+        break;
+      }
+    }
+    innerstate++;
+    break;
+
+  default:
+    return true;
+  }
+  return false;
+}
+
+bool ESP32_SMA_Inverter::getInverterTemperature()
+{
+  logD("getInverterTemperature(%i)", innerstate);
+  
+  switch (innerstate)
+  {
+  case 0:
+    writePacketHeader(level1packet);
+    writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2temperature, sizeof(smanet2temperature));
+    writeSMANET2PlusPacketTrailer(level1packet);
+    writePacketLength(level1packet);
+    sendPacket(level1packet);
+    innerstate++;
+    break;
+
+  case 1:
+    if (waitForMultiPacket(0x0001))
+    {
+      if (validateChecksum())
+      {
+        packet_send_counter++;
+        innerstate++;
+      }
+      else
+        innerstate = 0;
+    }
+    break;
+
+  case 2:
+    // Extract inverter temperature (value type 0x1137)
+    for (int i = 40 + 1; i < packetposition - 3; i += 28)
+    {
+      valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+      memcpy(&value, &level1packet[i + 8], 4);
+      
+      if (valuetype == 0x1137) // Inverter temperature
+      {
+        invertertemp = (float)value / 100.0; // Temperature in °C
+        logI("Inverter Temp: %f °C", invertertemp);
+        _client.publish(MQTT_BASE_TOPIC "inverter_temp", String(invertertemp), true);
+        break;
+      }
+    }
+    innerstate++;
+    break;
+
+  default:
+    return true;
+  }
+  return false;
+}
+
+bool ESP32_SMA_Inverter::getMaxPowerToday()
+{
+  logD("getMaxPowerToday(%i)", innerstate);
+  
+  switch (innerstate)
+  {
+  case 0:
+    writePacketHeader(level1packet);
+    writeSMANET2PlusPacket(level1packet, 0x09, 0xa0, packet_send_counter, 0, 0, 0);
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2maxpower, sizeof(smanet2maxpower));
+    writeSMANET2PlusPacketTrailer(level1packet);
+    writePacketLength(level1packet);
+    sendPacket(level1packet);
+    innerstate++;
+    break;
+
+  case 1:
+    if (waitForMultiPacket(0x0001))
+    {
+      if (validateChecksum())
+      {
+        packet_send_counter++;
+        innerstate++;
+      }
+      else
+        innerstate = 0;
+    }
+    break;
+
+  case 2:
+    // Extract max power today (value type 0x2622)
+    for (int i = 40 + 1; i < packetposition - 3; i += 28)
+    {
+      valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+      memcpy(&value, &level1packet[i + 8], 4);
+      
+      if (valuetype == 0x2622) // Max power today
+      {
+        maxpowertoday = value; // Power in W
+        logI("Max Power Today: %lu W", maxpowertoday);
+        _client.publish(MQTT_BASE_TOPIC "max_power_today", String(maxpowertoday), true);
+        break;
+      }
+    }
+    innerstate++;
+    break;
+
+  default:
+    return true;
+  }
+  return false;
+}
+
