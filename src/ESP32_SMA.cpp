@@ -159,12 +159,16 @@ void ESP32_SMA::setup()
   mqttclient.enableLastWillMessage(MQTT_BASE_TOPIC "LWT", "offline", true); // You can activate the retain flag by setting the third parameter to true
 
   logW("Connecting to %s" , WIFI_SSID);
-  logI("Current IP (if any): %s" , WiFi.localIP().toString().c_str());
+  {
+    String ipStr = WiFi.localIP().toString();
+    logI("Current IP (if any): %s" , ipStr.c_str());
+  }
 
   // Always set time to GMT timezone
   configTime(timeZoneOffset, 0, NTP_SERVER);
   if (WiFi.status() == WL_CONNECTED) {
-    logW("WiFi connected: %s -> %s" , WIFI_SSID, WiFi.localIP().toString().c_str());
+    String ipStr = WiFi.localIP().toString();
+    logW("WiFi connected: %s -> %s" , WIFI_SSID, ipStr.c_str());
   } else {
     logW("WiFi not connected yet; MQTT/UDP will start once connected");
   }
@@ -292,13 +296,12 @@ void ESP32_SMA::loop()
 
   // Wait for initial NTP sync before setting up inverter
   if (mainstate == MAINSTATE_INIT && ESP32rtc.getEpoch() < AFTER_NOW)
-  { configTime(timeZoneOffset, 0, NTP_SERVER); // just added configtime multiple times to make this work. Not a nice workaround...
-
+  {
+    // Avoid re-calling configTime in loop; SNTP is already configured in setup().
     log_d("NTP not yet sync'd, sleeping");
-    log_w("NTP not yes sync'd, sleeping 10s");
+    log_w("NTP not yet sync'd, sleeping 10s");
     dodelay(10000);
-    configTime(timeZoneOffset, 0, NTP_SERVER);
-
+    return;
   }
 
   // Keep BT work within the state machine; avoid extra pre-connection loop that could starve WiFi
