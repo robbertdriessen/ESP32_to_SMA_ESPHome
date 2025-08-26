@@ -30,6 +30,13 @@
 #include <ets-appender.hpp>
 #include <udp-appender.hpp>
 #include "ESP32_SMA_Inverter.h"
+#ifdef ARDUINO_ARCH_ESP32
+#include "esp_sntp.h"
+#endif
+
+// Track if we've aligned ESP32rtc to SNTP time to avoid repeated adjustments
+static bool gRtcAligned = false;
+static unsigned long gBtEarliestStartMs = 0;
 
 
 using namespace esp32m;
@@ -127,13 +134,16 @@ void ESP32_SMA::setup()
 #endif
   Serial.println("added appenders");
 
+  // Start WiFi first with modem sleep enabled (required for WiFi+BT), then start Classic BT
+
   // Ensure WiFi is in station mode and has a friendly hostname before connecting
   WiFi.mode(WIFI_STA);
 #ifdef HOST
   WiFi.setHostname(HOST);
 #endif
-  // Improve WiFi stability when coexisting with classic BT
-  WiFi.setSleep(false);
+  // When WiFi and Classic BT are both enabled, WiFi modem sleep MUST be enabled
+  // to satisfy coexistence requirements in ESP-IDF.
+  WiFi.setSleep(true);
   WiFi.persistent(false);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   {
@@ -165,7 +175,24 @@ void ESP32_SMA::setup()
   }
 
   // Always set time to GMT timezone
-  configTime(timeZoneOffset, 0, NTP_SERVER);
+#ifdef ARDUINO_ARCH_ESP32
+  // Log DNS for NTP server to spot resolution issues
+  {
+    IPAddress ip;
+    if (WiFi.hostByName(NTP_SERVER, ip)) {
+      String sip = ip.toString();
+      logI("NTP DNS %s -> %s", NTP_SERVER, sip.c_str());
+    } else {
+      logW("NTP DNS failed for %s", NTP_SERVER);
+    }
+  }
+  // Notify when SNTP actually synchronizes
+  sntp_set_time_sync_notification_cb([](struct timeval *tv){
+    time_t now = time(nullptr);
+    Serial.printf("SNTP sync event, now=%lu\n", (unsigned long)now);
+  });
+#endif
+  configTime(timeZoneOffset, 0, NTP_SERVER, NTP_SERVER2, NTP_SERVER3);
   if (WiFi.status() == WL_CONNECTED) {
     String ipStr = WiFi.localIP().toString();
     logW("WiFi connected: %s -> %s" , WIFI_SSID, ipStr.c_str());
@@ -294,8 +321,28 @@ void ESP32_SMA::loop()
   //     return;
   // }
 
+  // If SNTP has set the system clock, align ESP32rtc once
+  {
+    time_t now = time(nullptr);
+    if (!gRtcAligned && now > 1609459200) { // > 2021-01-01
+      ESP32rtc.setTime(now);
+      gRtcAligned = true;
+      logI("RTC aligned to SNTP: %lu", (unsigned long)now);
+      // Allow a short grace period before starting Classic BT to avoid coex timing issues
+      gBtEarliestStartMs = millis() + 3000;
+    }
+  }
+
   // Wait for initial NTP sync before setting up inverter
-  if (mainstate == MAINSTATE_INIT && ESP32rtc.getEpoch() < AFTER_NOW)
+  // Prefer the SNTP sync status when available; fall back to a time threshold heuristic.
+  {
+    time_t now = time(nullptr);
+#ifdef ARDUINO_ARCH_ESP32
+    bool synced = (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) || (now > 1640995200);
+#else
+    bool synced = (now > 1640995200);
+#endif
+    if (mainstate == MAINSTATE_INIT && !synced)
   {
     // Avoid re-calling configTime in loop; SNTP is already configured in setup().
     log_d("NTP not yet sync'd, sleeping");
@@ -303,9 +350,16 @@ void ESP32_SMA::loop()
     dodelay(10000);
     return;
   }
+  }
 
   // Keep BT work within the state machine; avoid extra pre-connection loop that could starve WiFi
   blinkLed();
+
+  // Guard: defer first BT start slightly after SNTP sync to reduce coex failures
+  if (mainstate == MAINSTATE_INIT && gBtEarliestStartMs != 0 && millis() < gBtEarliestStartMs) {
+    dodelay(1000);
+    return;
+  }
 
   log_d("Loop mainstate: %s", mainstate.toString().c_str());
 
@@ -319,7 +373,8 @@ void ESP32_SMA::loop()
     }
     else
     {
-      dodelay(1000);
+      // Backoff more before retrying BT bring-up to avoid coex issues
+      dodelay(2000);
     }
     break;
 

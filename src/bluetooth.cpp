@@ -8,6 +8,7 @@
 #include "BluetoothSerial.h"
 #include <EEPROM.h>
 #include <esp_bt_device.h> // ESP32 BLE
+#include <esp_bt.h>
 #include <logging.hpp>
 #include "Utils_SMA.h"
 #include "site_details.h"
@@ -50,6 +51,11 @@ bool BTStart()
 
   if (btstate == STATE_FRESH)
   {
+    // Free BLE memory when using Classic BT only; prevents coexist aborts and saves RAM
+    esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+    // Tiny guard before enabling controller, gives WiFi/coex a moment to settle
+    delay(50);
+
     SerialBT.begin("ESP32test", true); // "true" creates this device as a BT Master.
     SerialBT.setPin("0000");           // pin as in "PIN" This is the BT connection pin, not login pin. ALWAYS 0000, unchangable.
     updateMyDeviceAddress();
