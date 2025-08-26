@@ -96,6 +96,13 @@ void ESP32_SMA::onConnectionEstablished()
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_dc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Power\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_dc\", \"unique_id\": \"" HOST "-instant_dc\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Voltage\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc\", \"unique_id\": \"" HOST "-instant_vdc\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_adc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Ampere\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_adc\", \"unique_id\": \"" HOST "-instant_adc\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  // Per-string metrics if available
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc1/config", "{\"name\": \"" FRIENDLY_NAME " DC Voltage 1\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc1\", \"unique_id\": \"" HOST "-instant_vdc1\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc2/config", "{\"name\": \"" FRIENDLY_NAME " DC Voltage 2\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc2\", \"unique_id\": \"" HOST "-instant_vdc2\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_adc1/config", "{\"name\": \"" FRIENDLY_NAME " DC Current 1\", \"device_class\": \"current\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_adc1\", \"unique_id\": \"" HOST "-instant_adc1\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_adc2/config", "{\"name\": \"" FRIENDLY_NAME " DC Current 2\", \"device_class\": \"current\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_adc2\", \"unique_id\": \"" HOST "-instant_adc2\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_pdc1/config", "{\"name\": \"" FRIENDLY_NAME " DC Power 1\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_pdc1\", \"unique_id\": \"" HOST "-instant_pdc1\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_pdc2/config", "{\"name\": \"" FRIENDLY_NAME " DC Power 2\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_pdc2\", \"unique_id\": \"" HOST "-instant_pdc2\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/grid_frequency/config", "{\"name\": \"" FRIENDLY_NAME " Grid Frequency\", \"device_class\": \"frequency\", \"state_topic\": \"" MQTT_BASE_TOPIC "grid_frequency\", \"unique_id\": \"" HOST "-grid_frequency\", \"unit_of_measurement\": \"Hz\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/grid_voltage/config", "{\"name\": \"" FRIENDLY_NAME " Grid Voltage\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "grid_voltage\", \"unique_id\": \"" HOST "-grid_voltage\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/inverter_temp/config", "{\"name\": \"" FRIENDLY_NAME " Inverter Temperature\", \"device_class\": \"temperature\", \"state_topic\": \"" MQTT_BASE_TOPIC "inverter_temp\", \"unique_id\": \"" HOST "-inverter_temp\", \"unit_of_measurement\": \"°C\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
@@ -120,6 +127,22 @@ void ESP32_SMA::setup()
 #endif
   Serial.println("added appenders");
 
+  // Ensure WiFi is in station mode and has a friendly hostname before connecting
+  WiFi.mode(WIFI_STA);
+#ifdef HOST
+  WiFi.setHostname(HOST);
+#endif
+  // Improve WiFi stability when coexisting with classic BT
+  WiFi.setSleep(false);
+  WiFi.persistent(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  {
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+      delay(100);
+    }
+  }
+
   // Get the MAC address in reverse order (not sure why, but do it here to make setup easier)
   unsigned char smaSetAddress[6] = {SMA_ADDRESS};
   for (int i = 0; i < 6; i++)
@@ -135,12 +158,16 @@ void ESP32_SMA::setup()
   mqttclient.enableHTTPWebUpdater("/update");                               // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overrited with enableHTTPWebUpdater("user", "password").
   mqttclient.enableLastWillMessage(MQTT_BASE_TOPIC "LWT", "offline", true); // You can activate the retain flag by setting the third parameter to true
 
-  logW("Connected to %s" , WIFI_SSID);
-  logW("IP address: %s" , WiFi.localIP().toString().c_str());
+  logW("Connecting to %s" , WIFI_SSID);
+  logI("Current IP (if any): %s" , WiFi.localIP().toString().c_str());
 
   // Always set time to GMT timezone
   configTime(timeZoneOffset, 0, NTP_SERVER);
-  logW("2W Connected to %s" , WIFI_SSID);
+  if (WiFi.status() == WL_CONNECTED) {
+    logW("WiFi connected: %s -> %s" , WIFI_SSID, WiFi.localIP().toString().c_str());
+  } else {
+    logW("WiFi not connected yet; MQTT/UDP will start once connected");
+  }
   
   Logging::hookUartLogger();
 //  setupOTAServer();
@@ -160,8 +187,13 @@ void ESP32_SMA::everySecond()
   blinkLedOff();
   static uint32_t hb = 0;
   hb++;
-  if ((hb % 30) == 0 && mqttclient.isConnected()) {
-    mqttclient.publish(MQTT_BASE_TOPIC "uptime_sec", String(ESP32rtc.getEpoch()), false);
+  if ((hb % 5) == 0) {
+    // Debug heartbeat every 5s
+    logI("heartbeat t=%lu rssi=%d", ESP32rtc.getEpoch(), WiFi.RSSI());
+    if (mqttclient.isConnected()) {
+      mqttclient.publish(MQTT_BASE_TOPIC "uptime_sec", String(ESP32rtc.getEpoch()), false);
+      mqttclient.publish(MQTT_BASE_TOPIC "heartbeat", "1", false);
+    }
   }
 }
 
@@ -206,6 +238,16 @@ void ESP32_SMA::loop()
   struct tm timeinfo;
   mqttclient.loop();
   // server.handleClient();
+  // If WiFi isn't up yet, don't start/hammer Bluetooth. Give WiFi/MQTT time to connect.
+  if (WiFi.status() != WL_CONNECTED) {
+    static unsigned long lastLog = 0;
+    if (millis() - lastLog > 3000) {
+      lastLog = millis();
+      logI("Waiting for WiFi... status=%d", (int)WiFi.status());
+    }
+    dodelay(500);
+    return;
+  }
   
   if (millis() >= nextSecond)
   {
@@ -254,11 +296,7 @@ void ESP32_SMA::loop()
 
   }
 
-  // Only bother to do anything if we are connected to WiFi and MQTT
-  if (!mqttclient.isConnected())
-    return;
-
-  // Run the "main" BT loop
+  // Keep BT work within the state machine; avoid extra pre-connection loop that could starve WiFi
   blinkLed();
 
   log_d("Loop mainstate: %s", mainstate.toString().c_str());
@@ -379,7 +417,7 @@ void ESP32_SMA::loop()
   default:
     mainstate = MAINSTATE_GET_INSTANT_AC_POWER;
     smaInverter.resetInnerstate();
-  dodelay(METRIC_UPDATE_MS); // Update cadence for normal metrics
+  dodelay(METRIC_UPDATE_MS); // cadence between metric cycles
   }
   return;
 

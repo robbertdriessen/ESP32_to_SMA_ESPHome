@@ -66,6 +66,6 @@ String MainState::toString() const {
             
 
             default :
-                return "Unknown:"+value;
+                return String("Unknown:") + String((unsigned int)value);
         }
 }

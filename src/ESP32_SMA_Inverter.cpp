@@ -19,12 +19,14 @@ bool ESP32_SMA_Inverter::initialiseSMAConnection()
   switch (innerstate)
   {
   case 0:
+  logD("AC: send request");
     //Wait for announcement/broadcast message from PV inverter
     if (getPacket(0x0002))
       innerstate++;
     break;
 
   case 1:
+  logD("AC: waiting multi-packet");
     //Extract data from the 0002 packet
     netid = level1packet[4];
 
@@ -43,6 +45,7 @@ bool ESP32_SMA_Inverter::initialiseSMAConnection()
     break;
 
   case 2:
+  logD("AC: parse response");
     // The SMA inverter will respond with a packet carrying the command '0x000A'.
     // It will return with cmdcode set to 0x000A.
     if (getPacket(0x000a))
@@ -129,6 +132,7 @@ bool ESP32_SMA_Inverter::logonSMAInverter()
   switch (innerstate)
   {
   case 0:
+  logD("DC: send request");
     writePacketHeader(level1packet, sixff);
     writeSMANET2PlusPacket(level1packet, 0x0e, 0xa0, packet_send_counter, 0x00, 0x01, 0x01);
     writeSMANET2ArrayFromProgmem(level1packet, smanet2packet_logon, sizeof(smanet2packet_logon));
@@ -149,6 +153,7 @@ bool ESP32_SMA_Inverter::logonSMAInverter()
     break;
 
   case 1:
+  logD("DC: waiting multi-packet");
     if (getPacket(0x0001) && validateChecksum())
     {
       innerstate++;
@@ -205,6 +210,7 @@ bool ESP32_SMA_Inverter::getDailyYield()
     break;
 
   case 2:
+  logD("DC: parse response");
     //Returns packet looking like this...
     //    7E FF 03 60 65 0D 90 5C AF F0 1D 50 00 00 A0 83
     //    00 1E 6C 5D 7E 00 00 00 00 00 00 03
@@ -266,7 +272,6 @@ bool ESP32_SMA_Inverter::getInstantACPower()
   logD("getInstantACPower(%i)" , innerstate);
 
   int32_t thisvalue;
-  static unsigned long lastPublish = 0;
   //Get spot value for instant AC wattage
   // debugMsg("getInstantACPower stage: ");
   // debugMsgLn(String(innerstate));
@@ -312,10 +317,7 @@ bool ESP32_SMA_Inverter::getInstantACPower()
     
     currentvalue = thisvalue;
     logI("AC Pwr= %li " , thisvalue);
-    if (millis() - lastPublish >= METRIC_UPDATE_MS) {
-      _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
-      lastPublish = millis();
-    }
+  _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
 
     spotpowerac = thisvalue;
 
@@ -396,7 +398,10 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
   logD("getInstantDCPower(%i)", innerstate);
   //DC
   //We expect a multi packet reply to this question...
-  static unsigned long lastPublish = 0;
+  
+  // per-string working vars
+  float vdc1 = 0, vdc2 = 0, adc1 = 0, adc2 = 0;
+  unsigned long pdc1 = 0, pdc2 = 0;
 
   switch (innerstate)
   {
@@ -443,17 +448,29 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       //0x451f=DC Voltage  /100
       //0x4521=DC Current  /1000
       //0x251e=DC Power /1
-      if (valuetype==0x451f) spotvoltdc=(float)value/(float)100.0;
-
+      if (valuetype==0x451f) spotvoltdc=(float)value/(float)100.0; // any string
       if (valuetype==0x4521) spotampdc=(float)value/(float)1000.0;
-
       if (valuetype == 0x251e) {
         if (value > MAX_SPOTDC) {
-          spotpowerdc = spotvoltdc * spotampdc; 
+          spotpowerdc = spotvoltdc * spotampdc;
         } else {
           spotpowerdc = value;
-        }  
-      } 
+        }
+      }
+
+      // Per string values (tags for string 1/2 seen in SBFspot: 0x451f/0x4521 paired with ObjId distinguishing strings).
+      // Here we use offsets in record to detect channel if available: byte i+3 is "obj"; known values: 0x00 string1, 0x01 string2.
+      // Fallback: publish total only if not distinguishable.
+      uint8_t obj = level1packet[i + 3];
+      if (valuetype==0x451f) {
+        if (obj==0x00) vdc1 = (float)value/100.0; else if (obj==0x01) vdc2 = (float)value/100.0;
+      }
+      if (valuetype==0x4521) {
+        if (obj==0x00) adc1 = (float)value/1000.0; else if (obj==0x01) adc2 = (float)value/1000.0;
+      }
+      if (valuetype==0x251e) {
+        if (obj==0x00) pdc1 = value; else if (obj==0x01) pdc2 = value;
+      }
 
       memcpy(&datetime, &level1packet[i + 4], 4);
     }
@@ -461,12 +478,15 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
     //spotpowerdc=volts*amps;
     logI("DC Pwr=%lu Volt=%f Amp=%f " , spotpowerdc, spotvoltdc, spotampdc);
 
-    if (millis() - lastPublish >= METRIC_UPDATE_MS) {
-      _client.publish(MQTT_BASE_TOPIC "instant_dc", LocalUtil::uint64ToString(spotpowerdc), true);
-      _client.publish(MQTT_BASE_TOPIC "instant_vdc", LocalUtil::uint64ToString(spotvoltdc), true);
-      _client.publish(MQTT_BASE_TOPIC "instant_adc", LocalUtil::uint64ToString(spotampdc), true);
-      lastPublish = millis();
-    }
+  _client.publish(MQTT_BASE_TOPIC "instant_dc", LocalUtil::uint64ToString(spotpowerdc), true);
+  _client.publish(MQTT_BASE_TOPIC "instant_vdc", LocalUtil::uint64ToString(spotvoltdc), true);
+  _client.publish(MQTT_BASE_TOPIC "instant_adc", LocalUtil::uint64ToString(spotampdc), true);
+  if (vdc1 > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc1", String(vdc1), true);
+  if (vdc2 > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc2", String(vdc2), true);
+  if (adc1 > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc1", String(adc1), true);
+  if (adc2 > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc2", String(adc2), true);
+  if (pdc1 > 0) _client.publish(MQTT_BASE_TOPIC "instant_pdc1", LocalUtil::uint64ToString(pdc1), true);
+  if (pdc2 > 0) _client.publish(MQTT_BASE_TOPIC "instant_pdc2", LocalUtil::uint64ToString(pdc2), true);
 
     innerstate++;
     break;
