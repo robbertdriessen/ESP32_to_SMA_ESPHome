@@ -191,7 +191,12 @@ void ESP32_SMA::everySecond()
     // Debug heartbeat every 5s
     logI("heartbeat t=%lu rssi=%d", ESP32rtc.getEpoch(), WiFi.RSSI());
     if (mqttclient.isConnected()) {
-      mqttclient.publish(MQTT_BASE_TOPIC "uptime_sec", String(ESP32rtc.getEpoch()), false);
+      time_t now = ESP32rtc.getEpoch();
+      struct tm tm_utc;
+      gmtime_r(&now, &tm_utc);
+      char ts[25];
+      strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
+      mqttclient.publish(MQTT_BASE_TOPIC "esp_local_utc_time", ts, false);
       mqttclient.publish(MQTT_BASE_TOPIC "heartbeat", "1", false);
     }
   }
