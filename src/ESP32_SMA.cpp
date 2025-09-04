@@ -91,6 +91,10 @@ void onConnectionEstablished() {
 void ESP32_SMA::onConnectionEstablished()
 {
   mqttclient.publish(MQTT_BASE_TOPIC "LWT", "online", true);
+  // Publish inverter serial
+  char invSerial[18];
+  sprintf(invSerial, "%02X:%02X:%02X:%02X:%02X:%02X", smaBTInverterAddressArray[5], smaBTInverterAddressArray[4], smaBTInverterAddressArray[3], smaBTInverterAddressArray[2], smaBTInverterAddressArray[1], smaBTInverterAddressArray[0]);
+  mqttclient.publish(MQTT_BASE_TOPIC "inv_serial", invSerial, true);
   logW("WiFi and MQTT connected");
   logW("v1 Build 2w d (%s) t (%s) "  ,__DATE__ , __TIME__) ;
 
@@ -114,6 +118,24 @@ void ESP32_SMA::onConnectionEstablished()
   mqttclient.publish("homeassistant/sensor/" HOST "/grid_voltage/config", "{\"name\": \"" FRIENDLY_NAME " Grid Voltage\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "grid_voltage\", \"unique_id\": \"" HOST "-grid_voltage\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/inverter_temp/config", "{\"name\": \"" FRIENDLY_NAME " Inverter Temperature\", \"device_class\": \"temperature\", \"state_topic\": \"" MQTT_BASE_TOPIC "inverter_temp\", \"unique_id\": \"" HOST "-inverter_temp\", \"unit_of_measurement\": \"°C\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/max_power_today/config", "{\"name\": \"" FRIENDLY_NAME " Max Power Today\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "max_power_today\", \"unique_id\": \"" HOST "-max_power_today\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  
+  // Extended metrics auto-discovery
+  mqttclient.publish("homeassistant/sensor/" HOST "/ac_voltage/config", "{\"name\": \"" FRIENDLY_NAME " AC Voltage\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "ac_voltage\", \"unique_id\": \"" HOST "-ac_voltage\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/ac_current/config", "{\"name\": \"" FRIENDLY_NAME " AC Current\", \"device_class\": \"current\", \"state_topic\": \"" MQTT_BASE_TOPIC "ac_current\", \"unique_id\": \"" HOST "-ac_current\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/operating_time/config", "{\"name\": \"" FRIENDLY_NAME " Operating Time\", \"device_class\": \"duration\", \"state_topic\": \"" MQTT_BASE_TOPIC "operating_time\", \"unique_id\": \"" HOST "-operating_time\", \"unit_of_measurement\": \"h\", \"state_class\": \"total_increasing\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/feedin_time/config", "{\"name\": \"" FRIENDLY_NAME " Feed-in Time\", \"device_class\": \"duration\", \"state_topic\": \"" MQTT_BASE_TOPIC "feedin_time\", \"unique_id\": \"" HOST "-feedin_time\", \"unit_of_measurement\": \"h\", \"state_class\": \"total_increasing\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/device_status/config", "{\"name\": \"" FRIENDLY_NAME " Device Status\", \"state_topic\": \"" MQTT_BASE_TOPIC "device_status\", \"unique_id\": \"" HOST "-device_status\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/device_status_code/config", "{\"name\": \"" FRIENDLY_NAME " Device Status Code\", \"state_topic\": \"" MQTT_BASE_TOPIC "device_status_code\", \"unique_id\": \"" HOST "-device_status_code\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  // New topics to match SBFspot
+  mqttclient.publish("homeassistant/sensor/" HOST "/inv_serial/config", "{\"name\": \"" FRIENDLY_NAME " Inverter Serial\", \"state_topic\": \"" MQTT_BASE_TOPIC "inv_serial\", \"unique_id\": \"" HOST "-inv_serial\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/inv_time/config", "{\"name\": \"" FRIENDLY_NAME " Inverter Time\", \"state_topic\": \"" MQTT_BASE_TOPIC "inv_time\", \"unique_id\": \"" HOST "-inv_time\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/uac2/config", "{\"name\": \"" FRIENDLY_NAME " Grid Voltage L2\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "uac2\", \"unique_id\": \"" HOST "-uac2\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/uac3/config", "{\"name\": \"" FRIENDLY_NAME " Grid Voltage L3\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "uac3\", \"unique_id\": \"" HOST "-uac3\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/iac2/config", "{\"name\": \"" FRIENDLY_NAME " AC Current L2\", \"device_class\": \"current\", \"state_topic\": \"" MQTT_BASE_TOPIC "iac2\", \"unique_id\": \"" HOST "-iac2\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/iac3/config", "{\"name\": \"" FRIENDLY_NAME " AC Current L3\", \"device_class\": \"current\", \"state_topic\": \"" MQTT_BASE_TOPIC "iac3\", \"unique_id\": \"" HOST "-iac3\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/pac1/config", "{\"name\": \"" FRIENDLY_NAME " AC Power L1\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "pac1\", \"unique_id\": \"" HOST "-pac1\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/pac2/config", "{\"name\": \"" FRIENDLY_NAME " AC Power L2\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "pac2\", \"unique_id\": \"" HOST "-pac2\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/pac3/config", "{\"name\": \"" FRIENDLY_NAME " AC Power L3\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "pac3\", \"unique_id\": \"" HOST "-pac3\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
 
 #endif // PUBLISH_HASS_TOPICS
 }
@@ -471,6 +493,46 @@ void ESP32_SMA::loop()
 
   case MAINSTATE_GET_MAX_POWER_TODAY: //12:
     if (smaInverter.getMaxPowerToday())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_AC_VOLTAGE: //13:
+    if (smaInverter.getACVoltage())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_AC_CURRENT: //14:
+    if (smaInverter.getACCurrent())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_OPERATING_TIME: //15:
+    if (smaInverter.getOperatingTime())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_FEEDIN_TIME: //16:
+    if (smaInverter.getFeedInTime())
+    {
+      mainstate++;
+      smaInverter.resetInnerstate();
+    }
+    break;
+
+  case MAINSTATE_GET_DEVICE_STATUS: //17:
+    if (smaInverter.getDeviceStatus())
     {
       mainstate++;
       smaInverter.resetInnerstate();

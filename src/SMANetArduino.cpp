@@ -216,11 +216,34 @@ bool containsLevel2Packet()
   if ((packetlength - level1headerlength) < 5)
     return false;
 
-  return (level1packet[0] == 0x7e &&
-          level1packet[1] == 0xff &&
-          level1packet[2] == 0x03 &&
-          level1packet[3] == 0x60 &&
-          level1packet[4] == 0x65);
+  // Fast path: header already aligned at start
+  if (level1packet[0] == 0x7e &&
+      level1packet[1] == 0xff &&
+      level1packet[2] == 0x03 &&
+      level1packet[3] == 0x60 &&
+      level1packet[4] == 0x65)
+    return true;
+
+  // Some inverters prepend bytes before PPP frame. Search and realign.
+  // Limit search window to a small prefix to avoid expensive scans.
+  const int maxScan = (packetposition > 64) ? 64 : packetposition - 5;
+  for (int off = 1; off <= maxScan; off++) {
+    if (level1packet[off] == 0x7e &&
+        level1packet[off + 1] == 0xff &&
+        level1packet[off + 2] == 0x03 &&
+        level1packet[off + 3] == 0x60 &&
+        level1packet[off + 4] == 0x65) {
+      // Move PPP frame to start of buffer
+      if (off > 0) {
+        memmove(level1packet, level1packet + off, packetposition - off);
+        packetposition -= off;
+        // packetlength includes L1 header and isn't relied on beyond here
+        log_i("Realigned L2 header by %d bytes", off);
+      }
+      return true;
+    }
+  }
+  return false;
 }
 //---------------------------------------------------------------
 // This function will read BT packets from the inverter until it finds one that is addressed to me, and
@@ -489,7 +512,12 @@ bool validateChecksum()
     //Wrong packet index received
   // Wrong packet index received
   // dumpPacket('R');
-  log_w("Wrong L2 header");
+  log_w("Wrong L2 header - packet length: %d, packetposition: %d", packetlength, packetposition);
+  // Log first few bytes for debugging
+  if (packetposition >= 5) {
+    log_w("First 5 bytes: %02X %02X %02X %02X %02X",
+          level1packet[0], level1packet[1], level1packet[2], level1packet[3], level1packet[4]);
+  }
     return false;
   }
   //Serial.println("*** in validateChecksum(). containsLevel2Packet() returned TRUE.");

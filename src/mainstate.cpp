@@ -60,6 +60,21 @@ String MainState::toString() const {
             case MAINSTATE_GET_MAX_POWER_TODAY :
                 return "GetMaxPowerToday";
             break;
+            case MAINSTATE_GET_AC_VOLTAGE :
+                return "GetACVoltage";
+            break;
+            case MAINSTATE_GET_AC_CURRENT :
+                return "GetACCurrent";
+            break;
+            case MAINSTATE_GET_OPERATING_TIME :
+                return "GetOperatingTime";
+            break;
+            case MAINSTATE_GET_FEEDIN_TIME :
+                return "GetFeedInTime";
+            break;
+            case MAINSTATE_GET_DEVICE_STATUS :
+                return "GetDeviceStatus";
+            break;
             case MAINSTATE_HIGH_LOOP :
                 return "Highloop";
             break;

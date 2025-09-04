@@ -69,10 +69,21 @@ using namespace esp32m;
 #define INIT_smanet2totalyieldWh { 0x54, 0x00, 0x01, 0x26, 0x00, 0xFF, 0x01, 0x26, 0x00}
 
 // Additional packet definitions for more metrics
-#define INIT_smanet2gridfrequency { 0x51, 0x00, 0x48, 0x46, 0x00, 0xFF, 0x48, 0x46, 0x00}
-#define INIT_smanet2gridvoltage { 0x51, 0x00, 0x64, 0x46, 0x00, 0xFF, 0x64, 0x46, 0x00}
-#define INIT_smanet2temperature { 0x51, 0x00, 0x37, 0x11, 0x00, 0xFF, 0x37, 0x11, 0x00}
+#define INIT_smanet2gridfrequency { 0x51, 0x00, 0x57, 0x46, 0x00, 0xFF, 0x57, 0x46, 0x00 } // 0x4657 Grid frequency
+#define INIT_smanet2gridvoltage   { 0x51, 0x00, 0x48, 0x46, 0x00, 0xFF, 0x48, 0x46, 0x00 } // 0x4648 Grid voltage (phase A)
+#define INIT_smanet2temperature   { 0x52, 0x00, 0x77, 0x23, 0x00, 0xFF, 0x77, 0x23, 0x00 } // 0x2377 Inverter temperature
 #define INIT_smanet2maxpower { 0x54, 0x00, 0x22, 0x26, 0x00, 0xFF, 0x22, 0x26, 0x00}
+
+// Extended metrics packets
+#define INIT_smanet2acvoltage { 0x51, 0x00, 0x48, 0x46, 0x00, 0xFF, 0x48, 0x46, 0x00 }  // AC voltage (phase A)
+#define INIT_smanet2accurrent { 0x51, 0x00, 0x50, 0x46, 0x00, 0xFF, 0x50, 0x46, 0x00}  // AC current
+#define INIT_smanet2powerfactor { 0x51, 0x00, 0x82, 0x46, 0x00, 0xFF, 0x82, 0x46, 0x00}  // Power factor
+#define INIT_smanet2reactivepower { 0x51, 0x00, 0x83, 0x46, 0x00, 0xFF, 0x83, 0x46, 0x00}  // Reactive power
+#define INIT_smanet2apparentpower { 0x51, 0x00, 0x84, 0x46, 0x00, 0xFF, 0x84, 0x46, 0x00}  // Apparent power
+#define INIT_smanet2operatingtime { 0x54, 0x00, 0x2e, 0x46, 0x00, 0xFF, 0x2e, 0x46, 0x00}  // Operating time
+#define INIT_smanet2feedintime { 0x54, 0x00, 0x2f, 0x46, 0x00, 0xFF, 0x2f, 0x46, 0x00}  // Feed-in time
+#define INIT_smanet2devicestatus { 0x51, 0x00, 0x48, 0x21, 0x00, 0xFF, 0x48, 0x21, 0x00 }  // 0x2148 Device status
+#define INIT_smanet2griderrors { 0x51, 0x00, 0x15, 0x82, 0x00, 0xFF, 0x15, 0x82, 0x00}  // Grid relay status
 
 #define INIT_fourzeros {0, 0, 0, 0}
 
@@ -101,6 +112,15 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
             smanet2gridvoltage INIT_smanet2gridvoltage,
             smanet2temperature INIT_smanet2temperature,
             smanet2maxpower INIT_smanet2maxpower,
+            smanet2acvoltage INIT_smanet2acvoltage,
+            smanet2accurrent INIT_smanet2accurrent,
+            smanet2powerfactor INIT_smanet2powerfactor,
+            smanet2reactivepower INIT_smanet2reactivepower,
+            smanet2apparentpower INIT_smanet2apparentpower,
+            smanet2operatingtime INIT_smanet2operatingtime,
+            smanet2feedintime INIT_smanet2feedintime,
+            smanet2devicestatus INIT_smanet2devicestatus,
+            smanet2griderrors INIT_smanet2griderrors,
             fourzeros INIT_fourzeros,
             SMAInverterPasscode SMA_INVERTER_USER_PASSCODE 
             {
@@ -118,6 +138,17 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         bool getMaxPowerToday();
         bool checkIfNeedToSetInverterTime();
         void setInverterTime();
+        
+        // Extended metrics functions
+        bool getACVoltage();
+        bool getACCurrent();
+        bool getPowerFactor();
+        bool getReactivePower();
+        bool getApparentPower();
+        bool getOperatingTime();
+        bool getFeedInTime();
+        bool getDeviceStatus();
+        bool getGridErrors();
 
         void resetInnerstate() { innerstate = 0; };
 
@@ -139,6 +170,15 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         prog_uchar PROGMEM smanet2gridvoltage[9];
         prog_uchar PROGMEM smanet2temperature[9];
         prog_uchar PROGMEM smanet2maxpower[9];
+        prog_uchar PROGMEM smanet2acvoltage[9];
+        prog_uchar PROGMEM smanet2accurrent[9];
+        prog_uchar PROGMEM smanet2powerfactor[9];
+        prog_uchar PROGMEM smanet2reactivepower[9];
+        prog_uchar PROGMEM smanet2apparentpower[9];
+        prog_uchar PROGMEM smanet2operatingtime[9];
+        prog_uchar PROGMEM smanet2feedintime[9];
+        prog_uchar PROGMEM smanet2devicestatus[9];
+        prog_uchar PROGMEM smanet2griderrors[9];
         prog_uchar PROGMEM fourzeros[4];
 
         //sizeOf defines
@@ -156,6 +196,15 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         const size_t sizeof_smanet2gridvoltage = sizeof(smanet2gridvoltage);
         const size_t sizeof_smanet2temperature = sizeof(smanet2temperature);
         const size_t sizeof_smanet2maxpower = sizeof(smanet2maxpower);
+        const size_t sizeof_smanet2acvoltage = sizeof(smanet2acvoltage);
+        const size_t sizeof_smanet2accurrent = sizeof(smanet2accurrent);
+        const size_t sizeof_smanet2powerfactor = sizeof(smanet2powerfactor);
+        const size_t sizeof_smanet2reactivepower = sizeof(smanet2reactivepower);
+        const size_t sizeof_smanet2apparentpower = sizeof(smanet2apparentpower);
+        const size_t sizeof_smanet2operatingtime = sizeof(smanet2operatingtime);
+        const size_t sizeof_smanet2feedintime = sizeof(smanet2feedintime);
+        const size_t sizeof_smanet2devicestatus = sizeof(smanet2devicestatus);
+        const size_t sizeof_smanet2griderrors = sizeof(smanet2griderrors);
         const size_t sizeof_fourzeros = sizeof(fourzeros);
 
         ESP32Time esp32rtc;
@@ -188,6 +237,17 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         float gridvoltage=0;
         float invertertemp=0;
         unsigned long maxpowertoday=0;
+        
+        // Extended metrics variables
+        float acvoltage=0;
+        float accurrent=0;
+        float powerfactor=0;
+        float reactivepower=0;
+        float apparentpower=0;
+        unsigned long operatingtime=0;
+        unsigned long feedintime=0;
+        unsigned int devicestatus=0;
+        unsigned int griderrors=0;
 
 };
 
