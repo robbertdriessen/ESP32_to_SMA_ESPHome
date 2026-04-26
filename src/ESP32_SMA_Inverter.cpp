@@ -323,13 +323,26 @@ bool ESP32_SMA_Inverter::getInstantACPower()
           _client.publish(MQTT_BASE_TOPIC "inv_time", String(datetime), true);
           spotpowerac = currentvalue;
           found_ac = true;
-        } else if (valuetype == 0x4646) { // PAC1
+
+          // Software-tracked daily peak. There is no SMA LRI for "max Pac today",
+          // so derive it from the running AC total. Reset at local-midnight rollover.
+          time_t now_local = esp32rtc.getEpoch();
+          struct tm tm_local; localtime_r(&now_local, &tm_local);
+          if (tm_local.tm_yday != maxpowertoday_yday) {
+            maxpowertoday = 0;
+            maxpowertoday_yday = tm_local.tm_yday;
+          }
+          if (value > (long)maxpowertoday) {
+            maxpowertoday = (unsigned long)value;
+            _client.publish(MQTT_BASE_TOPIC "max_power_today", String(maxpowertoday), true);
+          }
+        } else if (valuetype == 0x4640) { // PAC1
           logI("AC Pwr L1= %li ", value);
           _client.publish(MQTT_BASE_TOPIC "pac1", LocalUtil::uint64ToString(value), true);
-        } else if (valuetype == 0x4647) { // PAC2
+        } else if (valuetype == 0x4641) { // PAC2
           logI("AC Pwr L2= %li ", value);
           _client.publish(MQTT_BASE_TOPIC "pac2", LocalUtil::uint64ToString(value), true);
-        } else if (valuetype == 0x4648) { // PAC3
+        } else if (valuetype == 0x4642) { // PAC3
           logI("AC Pwr L3= %li ", value);
           _client.publish(MQTT_BASE_TOPIC "pac3", LocalUtil::uint64ToString(value), true);
         }
@@ -486,18 +499,17 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
         }
       }
 
-      // Per string values (tags for string 1/2 seen in SBFspot: 0x451f/0x4521 paired with ObjId distinguishing strings).
-      // Here we use offsets in record to detect channel if available: byte i+3 is "obj"; known values: 0x00 string1, 0x01 string2.
-      // Fallback: publish total only if not distinguishable.
-      uint8_t obj = level1packet[i + 3];
+      // SBFspot derives the string/channel from the LOW byte of the 4-byte code
+      // at record offset +0 (cls = code & 0xFF). String 1 => cls==1, String 2 => cls==2.
+      uint8_t cls = level1packet[i + 0];
       if (valuetype==0x451f) {
-        if (obj==0x00) vdc1 = (float)value/100.0; else if (obj==0x01) vdc2 = (float)value/100.0;
+        if (cls==1) vdc1 = (float)value/100.0; else if (cls==2) vdc2 = (float)value/100.0;
       }
       if (valuetype==0x4521) {
-        if (obj==0x00) adc1 = (float)value/1000.0; else if (obj==0x01) adc2 = (float)value/1000.0;
+        if (cls==1) adc1 = (float)value/1000.0; else if (cls==2) adc2 = (float)value/1000.0;
       }
       if (valuetype==0x251e) {
-        if (obj==0x00) pdc1 = value; else if (obj==0x01) pdc2 = value;
+        if (cls==1) pdc1 = value; else if (cls==2) pdc2 = value;
       }
 
       memcpy(&datetime, &level1packet[i + 4], 4);
@@ -961,56 +973,11 @@ bool ESP32_SMA_Inverter::getInverterTemperature()
 
 bool ESP32_SMA_Inverter::getMaxPowerToday()
 {
-  logD("getMaxPowerToday(%i)", innerstate);
-  
-  switch (innerstate)
-  {
-  case 0:
-    writePacketHeader(level1packet);
-    writeSMANET2PlusPacket(level1packet, 0x09, 0xa0, packet_send_counter, 0, 0, 0);
-    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
-    writeSMANET2ArrayFromProgmem(level1packet, smanet2maxpower, sizeof(smanet2maxpower));
-    writeSMANET2PlusPacketTrailer(level1packet);
-    writePacketLength(level1packet);
-    sendPacket(level1packet);
-    innerstate++;
-    break;
-
-  case 1:
-    if (waitForMultiPacket(0x0001))
-    {
-      if (validateChecksum())
-      {
-        packet_send_counter++;
-        innerstate++;
-      }
-      else
-        innerstate = 0;
-    }
-    break;
-
-  case 2:
-    // Extract max power today (value type 0x2622)
-    for (int i = 40 + 1; i < packetposition - 3; i += 28)
-    {
-      valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-      memcpy(&value, &level1packet[i + 8], 4);
-      
-      if (valuetype == 0x2622) // Max power today
-      {
-        maxpowertoday = value; // Power in W
-        logI("Max Power Today: %lu W", maxpowertoday);
-        _client.publish(MQTT_BASE_TOPIC "max_power_today", String(maxpowertoday), true);
-        break;
-      }
-    }
-    innerstate++;
-    break;
-
-  default:
-    return true;
-  }
-  return false;
+  // SMA exposes no LRI for "max Pac today". The previous implementation queried
+  // 0x2622 (Daily Yield) and published the Wh value as if it were Watts.
+  // The peak is now tracked in software inside getInstantACPower(); this state
+  // is kept as a no-op so the main state machine ordering is unchanged.
+  return true;
 }
 
 // Extended metric functions
@@ -1355,43 +1322,47 @@ bool ESP32_SMA_Inverter::getDeviceStatus()
 
   case 2:
     {
-      // Extract device status from OperationHealth (0x2148) attribute value
-      // Records for status are 40 bytes in SBFspot; our simplified read uses 28, but value is at +8
+      // Status records (OperationHealth 0x2148) are 40 bytes long. Each record's
+      // bytes [+8..+36] hold up to 8 candidate status attributes (4 bytes each).
+      // The currently-active attribute has its high byte set to 0x01; the low
+      // 3 bytes are the status code (307=OK, 455=Warning, 35=Fault, 303=Off).
+      // Walk records on a 40-byte stride and decode them with SBFspot's
+      // getattribute() rule.
+      const int recordsize = 40;
       bool found_status = false;
-      for (int i = 40 + 1; i < packetposition - 3; i += 28)
+      for (int i = 40 + 1; i + recordsize <= packetposition - 3; i += recordsize)
       {
         valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-        memcpy(&value, &level1packet[i + 8], 4);
+        if (valuetype != 0x2148) continue;
 
-        logD("Device Status packet: valuetype=0x%04X, value=%ld", valuetype, value);
-
-        if (valuetype == 0x2148) // OperationHealth -> status attribute
+        for (int idx = 8; idx < recordsize; idx += 4)
         {
-          devicestatus = value; // attribute ID directly
-          String status_text = "";
-          switch (devicestatus) {
-            case 35: status_text = "Fault"; break;
-            case 303: status_text = "Off"; break;
-            case 307: status_text = "OK"; break;
-            case 455: status_text = "Warning"; break;
-            default: status_text = String(devicestatus); break;
+          uint32_t attribute;
+          memcpy(&attribute, &level1packet[i + idx], 4);
+          uint32_t tag = attribute & 0x00FFFFFF;
+          if (tag == 0x00FFFFFE) break; // end-of-attributes marker
+          if ((attribute >> 24) == 0x01) // currently-active flag
+          {
+            devicestatus = tag;
+            String status_text;
+            switch (devicestatus) {
+              case 35:  status_text = "Fault"; break;
+              case 303: status_text = "Off"; break;
+              case 307: status_text = "OK"; break;
+              case 455: status_text = "Warning"; break;
+              default:  status_text = String(devicestatus); break;
+            }
+            logI("Device Status: %s (%u)", status_text.c_str(), devicestatus);
+            _client.publish(MQTT_BASE_TOPIC "device_status", status_text, true);
+            _client.publish(MQTT_BASE_TOPIC "device_status_code", String(devicestatus), true);
+            found_status = true;
+            break;
           }
-          logI("Device Status: %s (%d)", status_text.c_str(), devicestatus);
-          _client.publish(MQTT_BASE_TOPIC "device_status", status_text, true);
-          _client.publish(MQTT_BASE_TOPIC "device_status_code", String(devicestatus), true);
-          found_status = true;
-          break;
         }
+        if (found_status) break;
       }
       if (!found_status) {
-        logW("Device status data type 0x2148 not found in packet");
-        // Debug: dump all value types found
-        logW("Available value types in device status packet:");
-        for (int i = 40 + 1; i < packetposition - 3; i += 28) {
-          valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-          memcpy(&value, &level1packet[i + 8], 4);
-          logW("  0x%04X = %ld", valuetype, value);
-        }
+        logW("Device status: no active 0x2148 attribute found (packetlen=%d)", packetposition);
       }
       innerstate++;
       break;
