@@ -6,3 +6,5 @@
 .DS_Store
 src/wifi_details.h
 src/site_details.h
+
+*.log
