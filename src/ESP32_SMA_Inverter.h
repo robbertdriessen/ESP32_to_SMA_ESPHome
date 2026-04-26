@@ -62,7 +62,15 @@ using namespace esp32m;
 
 #define INIT_smanet2acspotvalues {0x51, 0x00, 0x3f, 0x26, 0x00, 0xFF, 0x3f, 0x26, 0x00}
 
-#define INIT_smanet2packetdcpower { 0x83, 0x00, 0x02, 0x80, 0x53, 0x00, 0x00, 0x25, 0x00, 0xFF, 0xFF, 0x25, 0x00}
+// Full 13-byte queries for commands whose mask byte is 0x80. The shared
+// smanet2packetx80x00x02x00 prefix only encodes mask=0x00, so these queries
+// bake the prefix in themselves and the call site MUST NOT prepend it.
+// Wire layout: [0x80][LE 4-byte command][LE 4-byte first LRI][LE 4-byte last LRI]
+//
+// SpotDCPower    (SBFspot): command=0x53800200, first=0x00251E00, last=0x00251EFF
+#define INIT_smanet2packetdcpower   { 0x80, 0x00, 0x02, 0x80, 0x53,  0x00, 0x1E, 0x25, 0x00,  0xFF, 0x1E, 0x25, 0x00 }
+// SpotDCVoltage  (SBFspot): command=0x53800200, first=0x00451F00, last=0x004521FF -> Udc/Idc per string
+#define INIT_smanet2packetdcvoltage { 0x80, 0x00, 0x02, 0x80, 0x53,  0x00, 0x1F, 0x45, 0x00,  0xFF, 0x21, 0x45, 0x00 }
 
 #define INIT_smanet2settime {0x8c, 0x0a, 0x02, 0x00, 0xf0, 0x00, 0x6d, 0x23, 0x00, 0x00, 0x6d, 0x23, 0x00, 0x00, 0x6d, 0x23, 0x00}
 
@@ -82,9 +90,12 @@ using namespace esp32m;
 #define INIT_smanet2apparentpower { 0x51, 0x00, 0x84, 0x46, 0x00, 0xFF, 0x84, 0x46, 0x00}  // Apparent power
 #define INIT_smanet2operatingtime { 0x54, 0x00, 0x2e, 0x46, 0x00, 0xFF, 0x2e, 0x46, 0x00}  // Operating time
 #define INIT_smanet2feedintime { 0x54, 0x00, 0x2f, 0x46, 0x00, 0xFF, 0x2f, 0x46, 0x00}  // Feed-in time
-// Mask byte must be 0x80 for status-type queries (SBFspot DeviceStatus uses command 0x51800200)
-#define INIT_smanet2devicestatus { 0x51, 0x80, 0x48, 0x21, 0x00, 0xFF, 0x48, 0x21, 0x00 }  // 0x2148 OperationHealth (status)
-#define INIT_smanet2griderrors   { 0x51, 0x80, 0x64, 0x41, 0x00, 0xFF, 0x64, 0x41, 0x00 }  // 0x4164 GridRelayStatus (status)
+// DeviceStatus and GridRelayStatus are also mask-byte-0x80 commands, so they
+// also need the full 13-byte form. Call site MUST NOT prepend the shared prefix.
+// DeviceStatus    (SBFspot): command=0x51800200, first=0x00214800, last=0x002148FF
+#define INIT_smanet2devicestatus { 0x80, 0x00, 0x02, 0x80, 0x51,  0x00, 0x48, 0x21, 0x00,  0xFF, 0x48, 0x21, 0x00 }
+// GridRelayStatus (SBFspot): command=0x51800200, first=0x00416400, last=0x004164FF
+#define INIT_smanet2griderrors   { 0x80, 0x00, 0x02, 0x80, 0x51,  0x00, 0x64, 0x41, 0x00,  0xFF, 0x64, 0x41, 0x00 }
 
 #define INIT_fourzeros {0, 0, 0, 0}
 
@@ -107,6 +118,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
             smanet2packet_logon INIT_smanet2packet_logon,
             smanet2acspotvalues INIT_smanet2acspotvalues,
             smanet2packetdcpower INIT_smanet2packetdcpower,
+            smanet2packetdcvoltage INIT_smanet2packetdcvoltage,
             smanet2settime INIT_smanet2settime,
             smanet2totalyieldWh INIT_smanet2totalyieldWh,
             smanet2gridfrequency INIT_smanet2gridfrequency,
@@ -165,6 +177,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         prog_uchar PROGMEM smanet2packet_logon[17];
         prog_uchar PROGMEM smanet2acspotvalues[9];
         prog_uchar PROGMEM smanet2packetdcpower[13];
+        prog_uchar PROGMEM smanet2packetdcvoltage[13];
         prog_uchar PROGMEM smanet2settime[17];
         prog_uchar PROGMEM smanet2totalyieldWh[9];
         prog_uchar PROGMEM smanet2gridfrequency[9];
@@ -178,8 +191,8 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         prog_uchar PROGMEM smanet2apparentpower[9];
         prog_uchar PROGMEM smanet2operatingtime[9];
         prog_uchar PROGMEM smanet2feedintime[9];
-        prog_uchar PROGMEM smanet2devicestatus[9];
-        prog_uchar PROGMEM smanet2griderrors[9];
+        prog_uchar PROGMEM smanet2devicestatus[13];
+        prog_uchar PROGMEM smanet2griderrors[13];
         prog_uchar PROGMEM fourzeros[4];
 
         //sizeOf defines
@@ -191,6 +204,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         const size_t sizeof_smanet2packet_logon = sizeof(smanet2packet_logon);
         const size_t sizeof_smanet2acspotvalues = sizeof(smanet2acspotvalues);
         const size_t sizeof_smanet2packetdcpower = sizeof(smanet2packetdcpower);
+        const size_t sizeof_smanet2packetdcvoltage = sizeof(smanet2packetdcvoltage);
         const size_t sizeof_smanet2settime = sizeof(smanet2settime);
         const size_t sizeof_smanet2totalyieldWh = sizeof(smanet2totalyieldWh);
         const size_t sizeof_smanet2gridfrequency = sizeof(smanet2gridfrequency);
