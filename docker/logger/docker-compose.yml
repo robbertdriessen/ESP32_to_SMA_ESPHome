@@ -1,0 +1,21 @@
+# version: "3.9"
+services:
+  esp-logger:
+    build: .
+    image: esp-logger:local
+    restart: unless-stopped
+    environment:
+      - HTTP_PORT=9082
+      - UDP_PORT=1514
+      - LOG_BUFFER=20000
+      - LOG_DIR=/logs
+    ports:
+      - "9082:9082/tcp"
+      - "1514:1514/udp"
+    volumes:
+      - /mnt/data0/servert/esp_logger/logs:/logs
+    networks:
+      - espnet
+networks:
+  espnet:
+    driver: bridge
