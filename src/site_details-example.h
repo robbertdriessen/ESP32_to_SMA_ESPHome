@@ -53,4 +53,16 @@
 //this allows calculation of efficiency dc / ac
 //#define FETCH_DC_INSTANT_POWER
 
+// Without these, getACVoltage / getACCurrent / getOperatingTime / getFeedInTime
+// / getDeviceStatus all `return true;` immediately and the state machine
+// silently skips 5 metrics. Leave these defined unless you know why not.
+#define FETCH_EXTENDED_AC_METRICS
+#define FETCH_TIME_METRICS
+#define FETCH_STATUS_METRICS
+
+// Uncomment for three-phase inverters (e.g. Sunny Tripower). Single-phase
+// Sunny Boys leave the L2/L3 HA entities permanently "unavailable", so leave
+// commented for those.
+//#define THREE_PHASE
+
 #endif /* SITE_DETAILS_H_ */

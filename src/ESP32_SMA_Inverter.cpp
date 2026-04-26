@@ -427,37 +427,45 @@ bool ESP32_SMA_Inverter::getTotalPowerGeneration()
 
 bool ESP32_SMA_Inverter::getInstantDCPower()
 {
-  // DC power fetching - DISABLED due to protocol compatibility issues
-  // Many SMA inverters don't respond properly to DC power queries or use different command codes
-  // Comment out FETCH_DC_INSTANT_POWER in site_details.h to re-enable if your inverter supports it
 #ifndef FETCH_DC_INSTANT_POWER
   return true;
 #else
   logD("getInstantDCPower(%i)", innerstate);
-  //DC
-  //We expect a multi packet reply to this question...
-  
-  // per-string working vars
-  float vdc1 = 0, vdc2 = 0, adc1 = 0, adc2 = 0;
-  unsigned long pdc1 = 0, pdc2 = 0;
+
+  // Two SBFspot-style queries chained together so we get Pdc and Udc/Idc:
+  //   states 0..2 = SpotDCPower    (LRI 0x251E)              -> pdc1/pdc2
+  //   states 3..5 = SpotDCVoltage  (LRI 0x451F + 0x4521)     -> udc/idc per string
+  // Each phase has a hard timeout: if the inverter doesn't respond we skip
+  // forward instead of spinning back to state 0 (previously caused a watchdog
+  // reboot on inverters that ignore the DC query).
+  static unsigned long phaseStartMs = 0;
+  static unsigned long pdc1_acc = 0, pdc2_acc = 0;
+  static float vdc1_acc = 0, vdc2_acc = 0, adc1_acc = 0, adc2_acc = 0;
+  const unsigned long PHASE_TIMEOUT_MS = 4000;
 
   switch (innerstate)
   {
   case 0:
-
+    pdc1_acc = pdc2_acc = 0;
+    vdc1_acc = vdc2_acc = adc1_acc = adc2_acc = 0;
+    phaseStartMs = millis();
     writePacketHeader(level1packet);
-    //writePacketHeader(level1packet,0x01,0x00,smaBTInverterAddressArray);
-    writeSMANET2PlusPacket(level1packet, 0x09, 0xE0, packet_send_counter, 0, 0, 0);
-    // writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
-    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetdcpower, sizeof(smanet2packetdcpower));
+    writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
+    // smanet2packetdcpower has the {0x80,0x00,0x02,0x80} prefix baked in,
+    // so the shared smanet2packetx80x00x02x00 prefix MUST NOT be prepended here.
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetdcpower, sizeof_smanet2packetdcpower);
     writeSMANET2PlusPacketTrailer(level1packet);
     writePacketLength(level1packet);
-
     sendPacket(level1packet);
     innerstate++;
     break;
 
   case 1:
+    if (millis() - phaseStartMs > PHASE_TIMEOUT_MS) {
+      logW("DC Power phase timeout - moving on");
+      innerstate = 3; // skip parse, try DC voltage phase
+      break;
+    }
     if (waitForMultiPacket(0x0001))
     {
       if (validateChecksum())
@@ -465,69 +473,113 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
         packet_send_counter++;
         innerstate++;
       }
-      else {
-        logE("DC Power: Checksum validation failed");
-        innerstate = 0;
+      else
+      {
+        // Bad packet — abandon this phase rather than retrying forever
+        logW("DC Power: checksum failed, skipping");
+        innerstate = 3;
       }
     }
-    else {
-      logW("DC Power: No response received, retrying...");
-      innerstate = 0;
-    }
+    // else: fall through and try again until timeout
     break;
 
   case 2:
-    //displaySpotValues(28);
-    for (int i = 40 + 1; i < packetposition - 3; i += 28)
+    for (int i = 40 + 1; i + 28 <= packetposition - 3; i += 28)
     {
       valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
       memcpy(&value, &level1packet[i + 8], 4);
-
-      //valuetype
-      logD("getInstantDCPower(): valuetype: %li value: %lu ", valuetype, value);
-
-      //0x451f=DC Voltage  /100
-      //0x4521=DC Current  /1000
-      //0x251e=DC Power /1
-      if (valuetype==0x451f) spotvoltdc=(float)value/(float)100.0; // any string
-      if (valuetype==0x4521) spotampdc=(float)value/(float)1000.0;
-      if (valuetype == 0x251e) {
-        if (value > MAX_SPOTDC) {
-          spotpowerdc = spotvoltdc * spotampdc;
-        } else {
-          spotpowerdc = value;
-        }
-      }
-
-      // SBFspot derives the string/channel from the LOW byte of the 4-byte code
-      // at record offset +0 (cls = code & 0xFF). String 1 => cls==1, String 2 => cls==2.
       uint8_t cls = level1packet[i + 0];
-      if (valuetype==0x451f) {
-        if (cls==1) vdc1 = (float)value/100.0; else if (cls==2) vdc2 = (float)value/100.0;
-      }
-      if (valuetype==0x4521) {
-        if (cls==1) adc1 = (float)value/1000.0; else if (cls==2) adc2 = (float)value/1000.0;
-      }
-      if (valuetype==0x251e) {
-        if (cls==1) pdc1 = value; else if (cls==2) pdc2 = value;
-      }
 
+      logD("DC Pdc record: cls=%u valuetype=0x%04X value=%lu", cls, valuetype, value);
+
+      if (valuetype == 0x251e) {
+        if (cls == 1) pdc1_acc = value;
+        else if (cls == 2) pdc2_acc = value;
+      }
       memcpy(&datetime, &level1packet[i + 4], 4);
     }
+    innerstate++;
+    break;
 
-    //spotpowerdc=volts*amps;
-    logI("DC Pwr=%lu Volt=%f Amp=%f " , spotpowerdc, spotvoltdc, spotampdc);
+  case 3:
+    phaseStartMs = millis();
+    writePacketHeader(level1packet);
+    writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
+    // smanet2packetdcvoltage also bakes the {0x80,0x00,0x02,0x80} prefix in.
+    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetdcvoltage, sizeof_smanet2packetdcvoltage);
+    writeSMANET2PlusPacketTrailer(level1packet);
+    writePacketLength(level1packet);
+    sendPacket(level1packet);
+    innerstate++;
+    break;
 
-  _client.publish(MQTT_BASE_TOPIC "instant_dc", LocalUtil::uint64ToString(spotpowerdc), true);
-  _client.publish(MQTT_BASE_TOPIC "instant_vdc", LocalUtil::uint64ToString(spotvoltdc), true);
-  _client.publish(MQTT_BASE_TOPIC "instant_adc", LocalUtil::uint64ToString(spotampdc), true);
-  if (vdc1 > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc1", String(vdc1), true);
-  if (vdc2 > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc2", String(vdc2), true);
-  if (adc1 > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc1", String(adc1), true);
-  if (adc2 > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc2", String(adc2), true);
-  if (pdc1 > 0) _client.publish(MQTT_BASE_TOPIC "instant_pdc1", LocalUtil::uint64ToString(pdc1), true);
-  if (pdc2 > 0) _client.publish(MQTT_BASE_TOPIC "instant_pdc2", LocalUtil::uint64ToString(pdc2), true);
+  case 4:
+    if (millis() - phaseStartMs > PHASE_TIMEOUT_MS) {
+      logW("DC Voltage phase timeout - moving on");
+      innerstate = 6; // skip to publish
+      break;
+    }
+    if (waitForMultiPacket(0x0001))
+    {
+      if (validateChecksum())
+      {
+        packet_send_counter++;
+        innerstate++;
+      }
+      else
+      {
+        logW("DC Voltage: checksum failed, skipping");
+        innerstate = 6;
+      }
+    }
+    break;
 
+  case 5:
+    for (int i = 40 + 1; i + 28 <= packetposition - 3; i += 28)
+    {
+      valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+      memcpy(&value, &level1packet[i + 8], 4);
+      uint8_t cls = level1packet[i + 0];
+
+      logD("DC Udc/Idc record: cls=%u valuetype=0x%04X value=%lu", cls, valuetype, value);
+
+      if (valuetype == 0x451f) {
+        if (cls == 1) vdc1_acc = (float)value / 100.0f;
+        else if (cls == 2) vdc2_acc = (float)value / 100.0f;
+      } else if (valuetype == 0x4521) {
+        if (cls == 1) adc1_acc = (float)value / 1000.0f;
+        else if (cls == 2) adc2_acc = (float)value / 1000.0f;
+      }
+      memcpy(&datetime, &level1packet[i + 4], 4);
+    }
+    innerstate++;
+    break;
+
+  case 6:
+    {
+      // Aggregate and publish whatever we managed to collect this cycle.
+      spotpowerdc = pdc1_acc + pdc2_acc;
+      spotvoltdc  = (vdc1_acc > 0 && vdc2_acc > 0) ? (vdc1_acc + vdc2_acc) / 2.0f
+                   : (vdc1_acc > 0 ? vdc1_acc : vdc2_acc);
+      spotampdc   = adc1_acc + adc2_acc;
+
+      // Sanity check totals — if power is implausible and U*I is sane, fall back
+      if (spotpowerdc > MAX_SPOTDC) {
+        spotpowerdc = (unsigned long)(spotvoltdc * spotampdc);
+      }
+
+      logI("DC Pwr=%lu Volt=%.2f Amp=%.3f", spotpowerdc, spotvoltdc, spotampdc);
+
+      _client.publish(MQTT_BASE_TOPIC "instant_dc",   String(spotpowerdc), true);
+      _client.publish(MQTT_BASE_TOPIC "instant_vdc",  String(spotvoltdc),  true);
+      _client.publish(MQTT_BASE_TOPIC "instant_adc",  String(spotampdc),   true);
+      if (vdc1_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc1", String(vdc1_acc), true);
+      if (vdc2_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc2", String(vdc2_acc), true);
+      if (adc1_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc1", String(adc1_acc), true);
+      if (adc2_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc2", String(adc2_acc), true);
+      if (pdc1_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_pdc1", String(pdc1_acc), true);
+      if (pdc2_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_pdc2", String(pdc2_acc), true);
+    }
     innerstate++;
     break;
 
@@ -1292,7 +1344,8 @@ bool ESP32_SMA_Inverter::getDeviceStatus()
     functionStartTime = millis(); // Start timeout timer
     writePacketHeader(level1packet);
     writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
-    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetx80x00x02x00, sizeof(smanet2packetx80x00x02x00));
+    // smanet2devicestatus already bakes in the {0x80,0x00,0x02,0x80} prefix
+    // because its mask byte is 0x80; do NOT prepend smanet2packetx80x00x02x00.
     writeSMANET2ArrayFromProgmem(level1packet, smanet2devicestatus, sizeof(smanet2devicestatus));
     writeSMANET2PlusPacketTrailer(level1packet);
     writePacketLength(level1packet);
