@@ -385,6 +385,29 @@ void ESP32_SMA::loop()
     return;
   }
 
+  // BT-link watchdog. Once we're past initial pairing/login the state machine
+  // assumes BT is up. If the link silently dies (charTime stops advancing for
+  // STALE_BT_THRESHOLD_MS) the per-function timeouts just chain forever and
+  // the device sits dead until the user power-cycles. Force a full BT
+  // re-pair: tear down the stack and bounce back to MAINSTATE_INIT.
+  {
+    const unsigned long STALE_BT_THRESHOLD_MS = 30000UL;
+    if (mainstate >= MAINSTATE_INIT_SMA_CONNECTION
+        && gLastBTSuccessMs != 0
+        && (millis() - gLastBTSuccessMs) > STALE_BT_THRESHOLD_MS) {
+      logW("BT link stale for %lus, forcing full reconnect (mainstate=%s)",
+           (millis() - gLastBTSuccessMs) / 1000UL,
+           mainstate.toString().c_str());
+      btReset();
+      mainstate = MAINSTATE_INIT;
+      smaInverter.resetInnerstate();
+      gLastBTSuccessMs = millis(); // suppress immediate re-trigger
+      gBtEarliestStartMs = millis() + 3000;
+      dodelay(1000);
+      return;
+    }
+  }
+
   log_d("Loop mainstate: %s", mainstate.toString().c_str());
 
   switch (mainstate)
