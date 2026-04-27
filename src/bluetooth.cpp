@@ -37,6 +37,7 @@ unsigned char smaBTInverterAddressArray[6] = {};
 
 unsigned char myBTAddress[6] = {}; // BT address of ESP32.
 volatile bool btTimedOut = false;
+volatile unsigned long gLastBTSuccessMs = 0;
 
 
 
@@ -204,7 +205,19 @@ unsigned char getByte()
     return 0;
   }
   btTimedOut = false;
+  gLastBTSuccessMs = charTime;
   return (unsigned char)inInt;
+}
+
+// Tear the BT stack all the way down. The next call to BTStart() will
+// re-run SerialBT.begin() because btstate is back to STATE_FRESH.
+void btReset()
+{
+  log_w("btReset(): tearing down BT stack");
+  SerialBT.disconnect();
+  SerialBT.end();
+  btstate = STATE_FRESH;
+  btTimedOut = false;
 }
 
 void convertBTADDRStringToArray(char *tempbuf, unsigned char *outarray, char match)

@@ -10,6 +10,25 @@
 
 #include "site_details.h"
 
+// Dump up to `count` bytes from `buf` as space-separated hex with `tag` prefix.
+// Used to diagnose responses that fail the L2-frame check (e.g. the DC query
+// reply on a SunnyBoy that doesn't return PPP-framed data). Uses log_i (ESP-IDF
+// macro) rather than the class-level logI so it can run from a free function;
+// ESP32_SMA::setup() hooks ESP-IDF logs into the same UDP appender.
+static void logHexDump(const char* tag, const unsigned char* buf, int count)
+{
+  if (count <= 0) { log_i("%s [0 bytes]:", tag); return; }
+  if (count > 120) count = 120; // packet buffer max
+  char line[3 * 121 + 1];
+  int pos = 0;
+  for (int i = 0; i < count; i++) {
+    pos += snprintf(line + pos, sizeof(line) - pos, "%02X ", buf[i]);
+    if (pos >= (int)sizeof(line) - 4) break;
+  }
+  if (pos > 0 && line[pos - 1] == ' ') line[pos - 1] = '\0';
+  log_i("%s [%d bytes]: %s", tag, count, line);
+}
+
 bool ESP32_SMA_Inverter::initialiseSMAConnection()
 {
   logD("initialiseSMAConnection(%i) ", innerstate);
@@ -475,8 +494,23 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       }
       else
       {
-        // Bad packet — abandon this phase rather than retrying forever
-        logW("DC Power: checksum failed, skipping");
+        // SunnyBoy 4000US returns DC responses with a short 7-byte header
+        // instead of the usual ~41-byte PPP frame, so containsLevel2Packet()
+        // rejects them. Try parsing 28-byte records starting at offset 7
+        // before giving up. Records that don't exist won't iterate.
+        logW("DC Power: PPP frame check failed, attempting short-frame parse");
+        logHexDump("DC Power raw body", level1packet, packetposition);
+        for (int i = 7; i + 28 <= (int)packetposition - 3; i += 28)
+        {
+          valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+          memcpy(&value, &level1packet[i + 8], 4);
+          uint8_t cls = level1packet[i + 0];
+          logI("DC Pdc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
+          if (valuetype == 0x251e) {
+            if (cls == 1) pdc1_acc = value;
+            else if (cls == 2) pdc2_acc = value;
+          }
+        }
         innerstate = 3;
       }
     }
@@ -528,7 +562,26 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       }
       else
       {
-        logW("DC Voltage: checksum failed, skipping");
+        // Same short-frame fallback for the DC Voltage phase. SunnyBoy 4000US
+        // returns Idc records (LRI 0x4521) at offset 7 with 28-byte stride;
+        // Udc records (0x451F) probably arrive in a continuation packet we
+        // don't currently read, so they'll typically be absent here.
+        logW("DC Voltage: PPP frame check failed, attempting short-frame parse");
+        logHexDump("DC Voltage raw body", level1packet, packetposition);
+        for (int i = 7; i + 28 <= (int)packetposition - 3; i += 28)
+        {
+          valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+          memcpy(&value, &level1packet[i + 8], 4);
+          uint8_t cls = level1packet[i + 0];
+          logI("DC Udc/Idc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
+          if (valuetype == 0x451f) {
+            if (cls == 1) vdc1_acc = (float)value / 100.0f;
+            else if (cls == 2) vdc2_acc = (float)value / 100.0f;
+          } else if (valuetype == 0x4521) {
+            if (cls == 1) adc1_acc = (float)value / 1000.0f;
+            else if (cls == 2) adc2_acc = (float)value / 1000.0f;
+          }
+        }
         innerstate = 6;
       }
     }
@@ -563,9 +616,13 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
                    : (vdc1_acc > 0 ? vdc1_acc : vdc2_acc);
       spotampdc   = adc1_acc + adc2_acc;
 
-      // Sanity check totals — if power is implausible and U*I is sane, fall back
-      if (spotpowerdc > MAX_SPOTDC) {
-        spotpowerdc = (unsigned long)(spotvoltdc * spotampdc);
+      // If the inverter didn't return Pdc records (common with the short-frame
+      // DC response on some SunnyBoys) but did return U and I, derive P=U*I.
+      // Also guard against implausibly-large reported values.
+      if (spotpowerdc == 0 || spotpowerdc > MAX_SPOTDC) {
+        if (spotvoltdc > 0 && spotampdc > 0) {
+          spotpowerdc = (unsigned long)(spotvoltdc * spotampdc);
+        }
       }
 
       logI("DC Pwr=%lu Volt=%.2f Amp=%.3f", spotpowerdc, spotvoltdc, spotampdc);

@@ -21,6 +21,12 @@ extern unsigned char myBTAddress[6] ; // BT address of ESP32.
 
 bool BTStart();
 bool BTCheckConnected();
+// Forcibly tear down the BT stack so the next BTStart() goes through
+// SerialBT.begin() again. Used by the loop's stale-link watchdog.
+void btReset();
+// Wall-clock millis() of the last successfully-received BT byte. Updated by
+// getByte() on success. Used by the loop watchdog to detect dead links.
+extern volatile unsigned long gLastBTSuccessMs;
 
 String getDeviceAddress(const uint8_t *point);
 void updateMyDeviceAddress();
