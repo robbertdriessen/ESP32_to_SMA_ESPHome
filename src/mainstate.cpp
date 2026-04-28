@@ -75,6 +75,9 @@ String MainState::toString() const {
             case MAINSTATE_GET_DEVICE_STATUS :
                 return "GetDeviceStatus";
             break;
+            case MAINSTATE_DISCONNECT :
+                return "Disconnect";
+            break;
             case MAINSTATE_HIGH_LOOP :
                 return "Highloop";
             break;

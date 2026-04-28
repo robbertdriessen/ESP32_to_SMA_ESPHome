@@ -564,6 +564,21 @@ void ESP32_SMA::loop()
     }
     break;
 
+  case MAINSTATE_DISCONNECT: //18:
+    // SBFspot pattern: close the BT session at the end of every poll cycle.
+    // Long-lived sessions accumulate BT-stack staleness (we were seeing
+    // ~3-4 BT timeouts/min). disconnectAndLogoff() sends the SMA logoff
+    // command, tears down the stack, and resets packet counters; the next
+    // cycle re-enters MAINSTATE_INIT and does a fresh connect+login.
+    smaInverter.disconnectAndLogoff();
+    smaInverter.resetInnerstate();
+    mainstate = MAINSTATE_INIT;
+    // Suppress the watchdog during the gap - we're intentionally idle.
+    gLastBTSuccessMs = millis();
+    gBtEarliestStartMs = millis() + 1000;
+    dodelay(METRIC_UPDATE_MS);
+    break;
+
   default:
     mainstate = MAINSTATE_GET_INSTANT_AC_POWER;
     smaInverter.resetInnerstate();
