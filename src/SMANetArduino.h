@@ -65,6 +65,11 @@ bool ValidateSenderAddress();
 bool IsPacketForMe();
 bool ValidateDestAddress(unsigned char *address);
 
+// Reset SMA-protocol packet counters between cycles (after a logoff +
+// BT disconnect). The inverter restarts its own counter on a fresh login,
+// so leaving stale values here causes the post-reconnect handshake to
+// report unexpected packet indices.
+void resetSMANetCounters();
 
 
 #endif

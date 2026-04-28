@@ -69,6 +69,9 @@ using namespace esp32m;
 //
 // SpotDCPower    (SBFspot): command=0x53800200, first=0x00251E00, last=0x00251EFF
 #define INIT_smanet2packetdcpower   { 0x80, 0x00, 0x02, 0x80, 0x53,  0x00, 0x1E, 0x25, 0x00,  0xFF, 0x1E, 0x25, 0x00 }
+// SpotDCPower_2  (SBFspot fallback for inverters that ignore 0x251E):
+//   command=0x53800200, first=0x00451E00, last=0x00451EFF
+#define INIT_smanet2packetdcpower_2 { 0x80, 0x00, 0x02, 0x80, 0x53,  0x00, 0x1E, 0x45, 0x00,  0xFF, 0x1E, 0x45, 0x00 }
 // SpotDCVoltage  (SBFspot): command=0x53800200, first=0x00451F00, last=0x004521FF -> Udc/Idc per string
 #define INIT_smanet2packetdcvoltage { 0x80, 0x00, 0x02, 0x80, 0x53,  0x00, 0x1F, 0x45, 0x00,  0xFF, 0x21, 0x45, 0x00 }
 
@@ -118,6 +121,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
             smanet2packet_logon INIT_smanet2packet_logon,
             smanet2acspotvalues INIT_smanet2acspotvalues,
             smanet2packetdcpower INIT_smanet2packetdcpower,
+            smanet2packetdcpower_2 INIT_smanet2packetdcpower_2,
             smanet2packetdcvoltage INIT_smanet2packetdcvoltage,
             smanet2settime INIT_smanet2settime,
             smanet2totalyieldWh INIT_smanet2totalyieldWh,
@@ -163,6 +167,12 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         bool getDeviceStatus();
         bool getGridErrors();
 
+        // Send the SMA logoff command (cmd 0xFFFD010E) and tear down the BT
+        // stack. Mirrors SBFspot's connect-poll-logoff pattern: closing the
+        // session at cycle boundaries avoids the BT-stack staleness that
+        // accumulates on long-lived sessions.
+        bool disconnectAndLogoff();
+
         void resetInnerstate() { innerstate = 0; };
 
     protected:
@@ -177,6 +187,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         prog_uchar PROGMEM smanet2packet_logon[17];
         prog_uchar PROGMEM smanet2acspotvalues[9];
         prog_uchar PROGMEM smanet2packetdcpower[13];
+        prog_uchar PROGMEM smanet2packetdcpower_2[13];
         prog_uchar PROGMEM smanet2packetdcvoltage[13];
         prog_uchar PROGMEM smanet2settime[17];
         prog_uchar PROGMEM smanet2totalyieldWh[9];
@@ -204,6 +215,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         const size_t sizeof_smanet2packet_logon = sizeof(smanet2packet_logon);
         const size_t sizeof_smanet2acspotvalues = sizeof(smanet2acspotvalues);
         const size_t sizeof_smanet2packetdcpower = sizeof(smanet2packetdcpower);
+        const size_t sizeof_smanet2packetdcpower_2 = sizeof(smanet2packetdcpower_2);
         const size_t sizeof_smanet2packetdcvoltage = sizeof(smanet2packetdcvoltage);
         const size_t sizeof_smanet2settime = sizeof(smanet2settime);
         const size_t sizeof_smanet2totalyieldWh = sizeof(smanet2totalyieldWh);

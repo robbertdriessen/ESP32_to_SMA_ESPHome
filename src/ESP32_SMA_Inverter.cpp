@@ -10,6 +10,14 @@
 
 #include "site_details.h"
 
+// SMA "no data / inverter idle" sentinels. The inverter substitutes these
+// for any spot value it can't currently produce (typically at night when the
+// DSP/MPPT is offline). Returning them as raw integers poisons HA history
+// (e.g. instant_ac = -2147483648 W). Filter at every parse site.
+static inline bool isValidSpotValue(uint32_t v) {
+  return v != 0x80000000UL && v != 0xFFFFFFFFUL;
+}
+
 // Dump up to `count` bytes from `buf` as space-separated hex with `tag` prefix.
 // Used to diagnose responses that fail the L2-frame check (e.g. the DC query
 // reply on a SunnyBoy that doesn't return PPP-framed data). Uses log_i (ESP-IDF
@@ -336,6 +344,11 @@ bool ESP32_SMA_Inverter::getInstantACPower()
         memcpy(&value, &level1packet[i + 8], 4);
         memcpy(&datetime, &level1packet[i + 4], 4);
         if (valuetype == 0x263f) { // Total AC power
+          if (!isValidSpotValue(value)) {
+            logI("AC Pwr Total: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+            found_ac = true; // suppress fallback path below
+            continue;
+          }
           currentvalue = value;
           logI("AC Pwr Total= %li ", value);
           _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
@@ -356,12 +369,15 @@ bool ESP32_SMA_Inverter::getInstantACPower()
             _client.publish(MQTT_BASE_TOPIC "max_power_today", String(maxpowertoday), true);
           }
         } else if (valuetype == 0x4640) { // PAC1
+          if (!isValidSpotValue(value)) continue;
           logI("AC Pwr L1= %li ", value);
           _client.publish(MQTT_BASE_TOPIC "pac1", LocalUtil::uint64ToString(value), true);
         } else if (valuetype == 0x4641) { // PAC2
+          if (!isValidSpotValue(value)) continue;
           logI("AC Pwr L2= %li ", value);
           _client.publish(MQTT_BASE_TOPIC "pac2", LocalUtil::uint64ToString(value), true);
         } else if (valuetype == 0x4642) { // PAC3
+          if (!isValidSpotValue(value)) continue;
           logI("AC Pwr L3= %li ", value);
           _client.publish(MQTT_BASE_TOPIC "pac3", LocalUtil::uint64ToString(value), true);
         }
@@ -370,11 +386,15 @@ bool ESP32_SMA_Inverter::getInstantACPower()
         // Fallback to old method
         datetime = LocalUtil::get_long(level1packet + 40 + 1 + 4);
         thisvalue = LocalUtil::get_long(level1packet + 40 + 1 + 8);
-        currentvalue = thisvalue;
-        logI("AC Pwr= %li ", thisvalue);
-        _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
-        _client.publish(MQTT_BASE_TOPIC "inv_time", String(datetime), true);
-        spotpowerac = thisvalue;
+        if (!isValidSpotValue((uint32_t)thisvalue)) {
+          logI("AC Pwr (fallback): inverter idle (sentinel 0x%08lX), skipping", (unsigned long)thisvalue);
+        } else {
+          currentvalue = thisvalue;
+          logI("AC Pwr= %li ", thisvalue);
+          _client.publish(MQTT_BASE_TOPIC "instant_ac", LocalUtil::uint64ToString(currentvalue), true);
+          _client.publish(MQTT_BASE_TOPIC "inv_time", String(datetime), true);
+          spotpowerac = thisvalue;
+        }
       }
     }
     innerstate++;
@@ -444,6 +464,35 @@ bool ESP32_SMA_Inverter::getTotalPowerGeneration()
   return false;
 }
 
+// DC Power query mode. SunnyBoys vary in which LRI block they expose for Pdc:
+//   primary  = SBFspot's SpotDCPower    (LRI 0x251E)
+//   alt      = SBFspot's SpotDCPower_2  (LRI 0x451E)
+//   disabled = both queries returned an error frame, skip until reboot
+// Sticky for the runtime; reset on power-cycle.
+enum DCPowerMode { DCP_TRY_PRIMARY = 0, DCP_TRY_ALT = 1, DCP_DISABLED = 2 };
+static DCPowerMode gDCPowerMode = DCP_TRY_PRIMARY;
+
+// Walk the response body looking for a record header that matches one of the
+// allowed LRI low/mid bytes. Records are 28 bytes wide and start with
+// [cls][lri-low][lri-mid][dataType] where cls is the string number (1 or 2).
+// Returns the offset of the first matching header, or -1 if none found.
+static int findFirstRecordOffset(const unsigned char *buf, int len,
+                                 uint8_t lri_lo_a, uint8_t lri_mid,
+                                 uint8_t lri_lo_b)
+{
+  for (int j = 0; j + 28 <= len - 3; j++) {
+    uint8_t c = buf[j + 0];
+    uint8_t a = buf[j + 1];
+    uint8_t b = buf[j + 2];
+    uint8_t d = buf[j + 3];
+    if ((c == 0x01 || c == 0x02) && b == lri_mid &&
+        (a == lri_lo_a || a == lri_lo_b) && (d == 0x40 || d == 0xC0)) {
+      return j;
+    }
+  }
+  return -1;
+}
+
 bool ESP32_SMA_Inverter::getInstantDCPower()
 {
 #ifndef FETCH_DC_INSTANT_POWER
@@ -452,8 +501,8 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
   logD("getInstantDCPower(%i)", innerstate);
 
   // Two SBFspot-style queries chained together so we get Pdc and Udc/Idc:
-  //   states 0..2 = SpotDCPower    (LRI 0x251E)              -> pdc1/pdc2
-  //   states 3..5 = SpotDCVoltage  (LRI 0x451F + 0x4521)     -> udc/idc per string
+  //   states 0..2 = SpotDCPower    (LRI 0x251E or 0x451E)     -> pdc1/pdc2
+  //   states 3..5 = SpotDCVoltage  (LRI 0x451F + 0x4521)      -> udc/idc per string
   // Each phase has a hard timeout: if the inverter doesn't respond we skip
   // forward instead of spinning back to state 0 (previously caused a watchdog
   // reboot on inverters that ignore the DC query).
@@ -467,12 +516,22 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
   case 0:
     pdc1_acc = pdc2_acc = 0;
     vdc1_acc = vdc2_acc = adc1_acc = adc2_acc = 0;
+    if (gDCPowerMode == DCP_DISABLED) {
+      // Inverter doesn't expose Pdc via either LRI block. Skip the query
+      // entirely; the Udc/Idc phase below still runs and we derive P=U*I.
+      innerstate = 3;
+      break;
+    }
     phaseStartMs = millis();
     writePacketHeader(level1packet);
     writeSMANET2PlusPacket(level1packet, 0x09, 0xA1, packet_send_counter, 0, 0, 0);
-    // smanet2packetdcpower has the {0x80,0x00,0x02,0x80} prefix baked in,
+    // smanet2packetdcpower / _2 have the {0x80,0x00,0x02,0x80} prefix baked in,
     // so the shared smanet2packetx80x00x02x00 prefix MUST NOT be prepended here.
-    writeSMANET2ArrayFromProgmem(level1packet, smanet2packetdcpower, sizeof_smanet2packetdcpower);
+    if (gDCPowerMode == DCP_TRY_PRIMARY) {
+      writeSMANET2ArrayFromProgmem(level1packet, smanet2packetdcpower,   sizeof_smanet2packetdcpower);
+    } else {
+      writeSMANET2ArrayFromProgmem(level1packet, smanet2packetdcpower_2, sizeof_smanet2packetdcpower_2);
+    }
     writeSMANET2PlusPacketTrailer(level1packet);
     writePacketLength(level1packet);
     sendPacket(level1packet);
@@ -494,19 +553,36 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       }
       else
       {
-        // SunnyBoy 4000US returns DC responses with a short 7-byte header
-        // instead of the usual ~41-byte PPP frame, so containsLevel2Packet()
-        // rejects them. Try parsing 28-byte records starting at offset 7
-        // before giving up. Records that don't exist won't iterate.
+        // SunnyBoy 4000US returns DC responses with a short header instead of
+        // the usual PPP frame, so containsLevel2Packet() rejects them. Scan
+        // for the first valid record header (cls=1|2, lri matches expected).
+        // The expected LRI low byte for Pdc is 0x1E with mid byte 0x25 (primary)
+        // or 0x45 (alt fallback).
         logW("DC Power: PPP frame check failed, attempting short-frame parse");
         logHexDump("DC Power raw body", level1packet, packetposition);
-        for (int i = 7; i + 28 <= (int)packetposition - 3; i += 28)
-        {
-          valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-          memcpy(&value, &level1packet[i + 8], 4);
-          uint8_t cls = level1packet[i + 0];
-          logI("DC Pdc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
-          if (valuetype == 0x251e) {
+
+        const uint8_t lri_mid = (gDCPowerMode == DCP_TRY_PRIMARY) ? 0x25 : 0x45;
+        const uint16_t lri_expected = (uint16_t)0x1E | ((uint16_t)lri_mid << 8);
+        int start = findFirstRecordOffset(level1packet, (int)packetposition,
+                                          0x1E, lri_mid, 0x1E);
+        if (start < 0) {
+          // No records at all - likely an error frame from the inverter.
+          if (gDCPowerMode == DCP_TRY_PRIMARY) {
+            logW("DC Power 0x251E unsupported on this inverter, falling back to 0x451E");
+            gDCPowerMode = DCP_TRY_ALT;
+          } else {
+            logW("DC Power 0x451E also unsupported, disabling DC Power query until reboot");
+            gDCPowerMode = DCP_DISABLED;
+          }
+        } else {
+          for (int i = start; i + 28 <= (int)packetposition - 3; i += 28) {
+            valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+            memcpy(&value, &level1packet[i + 8], 4);
+            uint8_t cls = level1packet[i + 0];
+            if (cls != 1 && cls != 2) break; // ran off the end of records
+            logI("DC Pdc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
+            if (valuetype != lri_expected) continue;
+            if (!isValidSpotValue(value)) continue;
             if (cls == 1) pdc1_acc = value;
             else if (cls == 2) pdc2_acc = value;
           }
@@ -526,7 +602,11 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
 
       logD("DC Pdc record: cls=%u valuetype=0x%04X value=%lu", cls, valuetype, value);
 
-      if (valuetype == 0x251e) {
+      // Accept whichever LRI variant we're currently trying. If the inverter
+      // answers cleanly via PPP we treat that as the active variant working.
+      uint16_t lri_expected = (gDCPowerMode == DCP_TRY_ALT) ? 0x451E : 0x251E;
+      if (valuetype == lri_expected) {
+        if (!isValidSpotValue(value)) continue;
         if (cls == 1) pdc1_acc = value;
         else if (cls == 2) pdc2_acc = value;
       }
@@ -562,24 +642,32 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       }
       else
       {
-        // Same short-frame fallback for the DC Voltage phase. SunnyBoy 4000US
-        // returns Idc records (LRI 0x4521) at offset 7 with 28-byte stride;
-        // Udc records (0x451F) probably arrive in a continuation packet we
-        // don't currently read, so they'll typically be absent here.
+        // Same short-frame fallback for the DC Voltage phase. Locate the first
+        // valid record header (cls=1|2, lri-low=0x1F or 0x21, lri-mid=0x45)
+        // rather than assuming a fixed offset; otherwise variable leading
+        // garbage (66/67/68 byte bodies seen in the wild) misaligns parsing.
         logW("DC Voltage: PPP frame check failed, attempting short-frame parse");
         logHexDump("DC Voltage raw body", level1packet, packetposition);
-        for (int i = 7; i + 28 <= (int)packetposition - 3; i += 28)
-        {
-          valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-          memcpy(&value, &level1packet[i + 8], 4);
-          uint8_t cls = level1packet[i + 0];
-          logI("DC Udc/Idc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
-          if (valuetype == 0x451f) {
-            if (cls == 1) vdc1_acc = (float)value / 100.0f;
-            else if (cls == 2) vdc2_acc = (float)value / 100.0f;
-          } else if (valuetype == 0x4521) {
-            if (cls == 1) adc1_acc = (float)value / 1000.0f;
-            else if (cls == 2) adc2_acc = (float)value / 1000.0f;
+
+        int start = findFirstRecordOffset(level1packet, (int)packetposition,
+                                          0x1F, 0x45, 0x21);
+        if (start < 0) {
+          logW("DC Voltage: short-frame parse - no record header found");
+        } else {
+          for (int i = start; i + 28 <= (int)packetposition - 3; i += 28) {
+            valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+            memcpy(&value, &level1packet[i + 8], 4);
+            uint8_t cls = level1packet[i + 0];
+            if (cls != 1 && cls != 2) break;
+            logI("DC Udc/Idc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
+            if (!isValidSpotValue(value)) continue;
+            if (valuetype == 0x451f) {
+              if (cls == 1) vdc1_acc = (float)value / 100.0f;
+              else if (cls == 2) vdc2_acc = (float)value / 100.0f;
+            } else if (valuetype == 0x4521) {
+              if (cls == 1) adc1_acc = (float)value / 1000.0f;
+              else if (cls == 2) adc2_acc = (float)value / 1000.0f;
+            }
           }
         }
         innerstate = 6;
@@ -596,6 +684,7 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
 
       logD("DC Udc/Idc record: cls=%u valuetype=0x%04X value=%lu", cls, valuetype, value);
 
+      if (!isValidSpotValue(value)) continue;
       if (valuetype == 0x451f) {
         if (cls == 1) vdc1_acc = (float)value / 100.0f;
         else if (cls == 2) vdc2_acc = (float)value / 100.0f;
@@ -627,9 +716,12 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
 
       logI("DC Pwr=%lu Volt=%.2f Amp=%.3f", spotpowerdc, spotvoltdc, spotampdc);
 
-      _client.publish(MQTT_BASE_TOPIC "instant_dc",   String(spotpowerdc), true);
-      _client.publish(MQTT_BASE_TOPIC "instant_vdc",  String(spotvoltdc),  true);
-      _client.publish(MQTT_BASE_TOPIC "instant_adc",  String(spotampdc),   true);
+      // Only publish DC totals/per-string when we actually collected a value.
+      // Avoids overwriting HA history with 0 on a cycle where the inverter
+      // refused to answer (or is asleep).
+      if (spotpowerdc > 0) _client.publish(MQTT_BASE_TOPIC "instant_dc",  String(spotpowerdc), true);
+      if (spotvoltdc  > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc", String(spotvoltdc),  true);
+      if (spotampdc   > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc", String(spotampdc),   true);
       if (vdc1_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc1", String(vdc1_acc), true);
       if (vdc2_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_vdc2", String(vdc2_acc), true);
       if (adc1_acc > 0) _client.publish(MQTT_BASE_TOPIC "instant_adc1", String(adc1_acc), true);
@@ -907,11 +999,17 @@ bool ESP32_SMA_Inverter::getGridFrequency()
 
         if (valuetype == 0x4657) // Grid frequency
         {
+          if (!isValidSpotValue(value)) {
+            logI("Grid Freq: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+            found_frequency = true; // suppress not-found warning
+            break;
+          }
           gridfrequency = (float)value / 100.0; // Frequency in Hz
           // Sanity check - grid frequency should be between 45-65 Hz
           if (gridfrequency < 45.0 || gridfrequency > 65.0) {
-            logW("Grid frequency out of range: %f Hz (expected 45-65 Hz)", gridfrequency);
-            gridfrequency = 50.0; // Default to 50 Hz for European grid
+            logW("Grid frequency out of range: %f Hz (expected 45-65 Hz), skipping", gridfrequency);
+            found_frequency = true;
+            break;
           }
           logI("Grid Freq: %f Hz", gridfrequency);
           _client.publish(MQTT_BASE_TOPIC "grid_frequency", String(gridfrequency), true);
@@ -992,15 +1090,22 @@ bool ESP32_SMA_Inverter::getGridVoltage()
 
         if (valuetype == 0x4648) // Grid voltage (phase A)
         {
+          if (!isValidSpotValue(value)) {
+            logI("Grid Voltage L1: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+            found_voltage = true;
+            continue;
+          }
           gridvoltage = (float)value / 100.0; // Voltage in V
           logI("Grid Voltage L1: %f V", gridvoltage);
           _client.publish(MQTT_BASE_TOPIC "grid_voltage", String(gridvoltage), true);
           found_voltage = true;
         } else if (valuetype == 0x4649) {
+          if (!isValidSpotValue(value)) continue;
           float voltage = (float)value / 100.0;
           logI("Grid Voltage L2: %f V", voltage);
           _client.publish(MQTT_BASE_TOPIC "uac2", String(voltage), true);
         } else if (valuetype == 0x464A) {
+          if (!isValidSpotValue(value)) continue;
           float voltage = (float)value / 100.0;
           logI("Grid Voltage L3: %f V", voltage);
           _client.publish(MQTT_BASE_TOPIC "uac3", String(voltage), true);
@@ -1065,6 +1170,10 @@ bool ESP32_SMA_Inverter::getInverterTemperature()
       
       if (valuetype == 0x2377) // Inverter temperature
       {
+        if (!isValidSpotValue(value)) {
+          logI("Inverter Temp: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+          break;
+        }
         invertertemp = (float)value / 100.0; // Temperature in °C
         logI("Inverter Temp: %f °C", invertertemp);
         _client.publish(MQTT_BASE_TOPIC "inverter_temp", String(invertertemp), true);
@@ -1136,15 +1245,22 @@ bool ESP32_SMA_Inverter::getACVoltage()
 
   if (valuetype == 0x4648) // AC voltage (phase A)
         {
+          if (!isValidSpotValue(value)) {
+            logI("AC Voltage L1: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+            found_voltage = true;
+            continue;
+          }
           acvoltage = (float)value / 100.0; // Voltage in V
           logI("AC Voltage L1: %f V", acvoltage);
           _client.publish(MQTT_BASE_TOPIC "ac_voltage", String(acvoltage), true);
           found_voltage = true;
         } else if (valuetype == 0x4649) {
+          if (!isValidSpotValue(value)) continue;
           float voltage = (float)value / 100.0;
           logI("AC Voltage L2: %f V", voltage);
           _client.publish(MQTT_BASE_TOPIC "uac2", String(voltage), true);
         } else if (valuetype == 0x464A) {
+          if (!isValidSpotValue(value)) continue;
           float voltage = (float)value / 100.0;
           logI("AC Voltage L3: %f V", voltage);
           _client.publish(MQTT_BASE_TOPIC "uac3", String(voltage), true);
@@ -1217,15 +1333,22 @@ bool ESP32_SMA_Inverter::getACCurrent()
 
         if (valuetype == 0x4650) // AC current
         {
+          if (!isValidSpotValue(value)) {
+            logI("AC Current L1: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+            found_current = true;
+            continue;
+          }
           accurrent = (float)value / 1000.0; // Current in A
           logI("AC Current L1: %f A", accurrent);
           _client.publish(MQTT_BASE_TOPIC "ac_current", String(accurrent), true);
           found_current = true;
         } else if (valuetype == 0x4651) {
+          if (!isValidSpotValue(value)) continue;
           float current = (float)value / 1000.0;
           logI("AC Current L2: %f A", current);
           _client.publish(MQTT_BASE_TOPIC "iac2", String(current), true);
         } else if (valuetype == 0x4652) {
+          if (!isValidSpotValue(value)) continue;
           float current = (float)value / 1000.0;
           logI("AC Current L3: %f A", current);
           _client.publish(MQTT_BASE_TOPIC "iac3", String(current), true);
@@ -1298,6 +1421,11 @@ bool ESP32_SMA_Inverter::getOperatingTime()
 
         if (valuetype == 0x462E) // Operating time
         {
+          if (!isValidSpotValue(value)) {
+            logI("Operating Time: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+            found_optime = true;
+            break;
+          }
           operatingtime = value / 3600; // Convert seconds to hours
           logI("Operating Time: %lu hours", operatingtime);
           _client.publish(MQTT_BASE_TOPIC "operating_time", String(operatingtime), true);
@@ -1365,6 +1493,11 @@ bool ESP32_SMA_Inverter::getFeedInTime()
 
         if (valuetype == 0x462F) // Feed-in time
         {
+          if (!isValidSpotValue(value)) {
+            logI("Feed-in Time: inverter idle (sentinel 0x%08lX), skipping", (unsigned long)value);
+            found_feedtime = true;
+            break;
+          }
           feedintime = value / 3600; // Convert seconds to hours
           logI("Feed-in Time: %lu hours", feedintime);
           _client.publish(MQTT_BASE_TOPIC "feedin_time", String(feedintime), true);
@@ -1493,4 +1626,25 @@ bool ESP32_SMA_Inverter::getPowerFactor() { return true; }
 bool ESP32_SMA_Inverter::getReactivePower() { return true; }
 bool ESP32_SMA_Inverter::getApparentPower() { return true; }
 bool ESP32_SMA_Inverter::getGridErrors() { return true; }
+
+bool ESP32_SMA_Inverter::disconnectAndLogoff()
+{
+  // SBFspot's logoff: cmd 0xFFFD010E followed by 0xFFFFFFFF padding. The
+  // inverter doesn't reply, so we send-and-forget then tear down the BT
+  // stack. btReset() puts btstate back to STATE_FRESH so the next BTStart()
+  // re-runs SerialBT.begin().
+  logI("disconnectAndLogoff: sending SMA logoff and closing BT");
+  writePacketHeader(level1packet, sixff);
+  writeSMANET2PlusPacket(level1packet, 0x08, 0xa0, packet_send_counter, 0x00, 0x03, 0x03);
+  writeSMANET2Long(level1packet, 0xFFFD010EUL); // command identifier (LE on the wire)
+  writeSMANET2Long(level1packet, 0xFFFFFFFFUL); // padding
+  writeSMANET2PlusPacketTrailer(level1packet);
+  writePacketLength(level1packet);
+  sendPacket(level1packet);
+  packet_send_counter++;
+
+  btReset();
+  resetSMANetCounters();
+  return true;
+}
 
