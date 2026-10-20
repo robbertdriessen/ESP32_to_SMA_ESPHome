@@ -48,7 +48,9 @@ bool BTStart()
   log_d("BTStart(%i)", btstate);
 
   static unsigned long lastAttempt = 0;
+  static int failedAttempts = 0;
   const unsigned long retryIntervalMs = 10000; // 10s between connect attempts
+  const int maxFailedAttempts = 3;
 
   if (btstate == STATE_FRESH)
   {
@@ -72,6 +74,15 @@ bool BTStart()
   {
     if (millis() - lastAttempt > retryIntervalMs)
     {
+      // lastAttempt != 0 means the previous attempt in this streak failed.
+      // After a few failures the BT stack itself is suspect: restart it.
+      if (lastAttempt != 0 && ++failedAttempts >= maxFailedAttempts)
+      {
+        log_w("BT connect failed %d times in a row, restarting BT stack", failedAttempts);
+        failedAttempts = 0;
+        btReset();
+        return false;
+      }
       log_i("Attempting BT connect...");
       SerialBT.connect(address);
       lastAttempt = millis();
@@ -81,6 +92,8 @@ bool BTStart()
   if (SerialBT.connected(1))
   {
     btstate = STATE_CONNECTED;
+    lastAttempt = 0; // next (re)connect after a disconnect may start immediately
+    failedAttempts = 0;
     log_w("Bluetooth connected succesfully!");
     return true;
   }
@@ -207,6 +220,25 @@ unsigned char getByte()
   btTimedOut = false;
   gLastBTSuccessMs = charTime;
   return (unsigned char)inInt;
+}
+
+// Close the SPP link but keep the BT stack running. Used at the end of every
+// poll cycle: a fresh session per cycle without the cost (and the leaks) of
+// SerialBT.end()/begin() thousands of times a day.
+void btDisconnect()
+{
+  log_i("btDisconnect(): closing BT link");
+  SerialBT.flush(); // let a queued logoff packet go out first
+  delay(100);
+  SerialBT.disconnect();
+  // Drop leftovers of this session so the next one starts on a fresh frame.
+  // (Not done right after connecting: the inverter's 0x0002 hello may
+  // already be waiting in the buffer then.)
+  while (SerialBT.available())
+    SerialBT.read();
+  if (btstate == STATE_CONNECTED)
+    btstate = STATE_SETUP;
+  btTimedOut = false;
 }
 
 // Tear the BT stack all the way down. The next call to BTStart() will

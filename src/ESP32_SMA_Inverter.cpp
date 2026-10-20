@@ -19,15 +19,14 @@ static inline bool isValidSpotValue(uint32_t v) {
 }
 
 // Dump up to `count` bytes from `buf` as space-separated hex with `tag` prefix.
-// Used to diagnose responses that fail the L2-frame check (e.g. the DC query
-// reply on a SunnyBoy that doesn't return PPP-framed data). Uses log_i (ESP-IDF
+// Used to diagnose responses that fail the L2-frame check. Uses log_i (ESP-IDF
 // macro) rather than the class-level logI so it can run from a free function;
 // ESP32_SMA::setup() hooks ESP-IDF logs into the same UDP appender.
 static void logHexDump(const char* tag, const unsigned char* buf, int count)
 {
   if (count <= 0) { log_i("%s [0 bytes]:", tag); return; }
-  if (count > 120) count = 120; // packet buffer max
-  char line[3 * 121 + 1];
+  if (count > 160) count = 160; // keep one syslog line readable
+  char line[3 * 161 + 1];
   int pos = 0;
   for (int i = 0; i < count; i++) {
     pos += snprintf(line + pos, sizeof(line) - pos, "%02X ", buf[i]);
@@ -159,7 +158,8 @@ bool ESP32_SMA_Inverter::logonSMAInverter()
   switch (innerstate)
   {
   case 0:
-  logD("DC: send request");
+  logD("Logon: send request");
+    logonOk = false;
     writePacketHeader(level1packet, sixff);
     writeSMANET2PlusPacket(level1packet, 0x0e, 0xa0, packet_send_counter, 0x00, 0x01, 0x01);
     writeSMANET2ArrayFromProgmem(level1packet, smanet2packet_logon, sizeof(smanet2packet_logon));
@@ -169,7 +169,7 @@ bool ESP32_SMA_Inverter::logonSMAInverter()
     for (int passcodeloop = 0; passcodeloop < sizeof(SMAInverterPasscode); passcodeloop++)
     {
       unsigned char v = pgm_read_byte(SMAInverterPasscode + passcodeloop);
-      writeSMANET2SingleByte(level1packet, (v + 0x88) % 0xff);
+      writeSMANET2SingleByte(level1packet, (unsigned char)(v + 0x88)); // SBFspot: char overflow, i.e. mod 256
     }
 
     writeSMANET2PlusPacketTrailer(level1packet);
@@ -180,14 +180,24 @@ bool ESP32_SMA_Inverter::logonSMAInverter()
     break;
 
   case 1:
-  logD("DC: waiting multi-packet");
+  logD("Logon: waiting for reply");
     if (getPacket(0x0001) && validateChecksum())
     {
-      innerstate++;
       packet_send_counter++;
+      if (l2ErrorCode == 0) {
+        logonOk = true;
+      } else if (l2ErrorCode == 0x0100) {
+        logE("Logon rejected: invalid inverter password");
+      } else {
+        logE("Logon rejected: error code 0x%04X", l2ErrorCode);
+      }
+      innerstate++;
     }
     else if (cmdcode == 0xFFFF) {
-      innerstate = 6; // retry
+      // No (valid) reply. Finish with logonOk=false; the main loop ends this
+      // cycle and retries on the next one instead of hammering the inverter.
+      logW("Logon: no reply from inverter");
+      innerstate++;
     }
     break;
 
@@ -467,31 +477,10 @@ bool ESP32_SMA_Inverter::getTotalPowerGeneration()
 // DC Power query mode. SunnyBoys vary in which LRI block they expose for Pdc:
 //   primary  = SBFspot's SpotDCPower    (LRI 0x251E)
 //   alt      = SBFspot's SpotDCPower_2  (LRI 0x451E)
-//   disabled = both queries returned an error frame, skip until reboot
+//   disabled = neither returned a Pdc record, skip until reboot (P = U*I)
 // Sticky for the runtime; reset on power-cycle.
 enum DCPowerMode { DCP_TRY_PRIMARY = 0, DCP_TRY_ALT = 1, DCP_DISABLED = 2 };
 static DCPowerMode gDCPowerMode = DCP_TRY_PRIMARY;
-
-// Walk the response body looking for a record header that matches one of the
-// allowed LRI low/mid bytes. Records are 28 bytes wide and start with
-// [cls][lri-low][lri-mid][dataType] where cls is the string number (1 or 2).
-// Returns the offset of the first matching header, or -1 if none found.
-static int findFirstRecordOffset(const unsigned char *buf, int len,
-                                 uint8_t lri_lo_a, uint8_t lri_mid,
-                                 uint8_t lri_lo_b)
-{
-  for (int j = 0; j + 28 <= len - 3; j++) {
-    uint8_t c = buf[j + 0];
-    uint8_t a = buf[j + 1];
-    uint8_t b = buf[j + 2];
-    uint8_t d = buf[j + 3];
-    if ((c == 0x01 || c == 0x02) && b == lri_mid &&
-        (a == lri_lo_a || a == lri_lo_b) && (d == 0x40 || d == 0xC0)) {
-      return j;
-    }
-  }
-  return -1;
-}
 
 bool ESP32_SMA_Inverter::getInstantDCPower()
 {
@@ -503,9 +492,9 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
   // Two SBFspot-style queries chained together so we get Pdc and Udc/Idc:
   //   states 0..2 = SpotDCPower    (LRI 0x251E or 0x451E)     -> pdc1/pdc2
   //   states 3..5 = SpotDCVoltage  (LRI 0x451F + 0x4521)      -> udc/idc per string
-  // Each phase has a hard timeout: if the inverter doesn't respond we skip
-  // forward instead of spinning back to state 0 (previously caused a watchdog
-  // reboot on inverters that ignore the DC query).
+  // The Udc/Idc reply (4 records) does not fit in one BT packet and arrives as
+  // two L1 fragments; getPacket() reassembles them. Each phase has a hard
+  // timeout so an inverter that ignores the query can't stall the cycle.
   static unsigned long phaseStartMs = 0;
   static unsigned long pdc1_acc = 0, pdc2_acc = 0;
   static float vdc1_acc = 0, vdc2_acc = 0, adc1_acc = 0, adc2_acc = 0;
@@ -553,64 +542,43 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       }
       else
       {
-        // SunnyBoy 4000US returns DC responses with a short header instead of
-        // the usual PPP frame, so containsLevel2Packet() rejects them. Scan
-        // for the first valid record header (cls=1|2, lri matches expected).
-        // The expected LRI low byte for Pdc is 0x1E with mid byte 0x25 (primary)
-        // or 0x45 (alt fallback).
-        logW("DC Power: PPP frame check failed, attempting short-frame parse");
+        logW("DC Power: invalid frame, skipping");
         logHexDump("DC Power raw body", level1packet, packetposition);
-
-        const uint8_t lri_mid = (gDCPowerMode == DCP_TRY_PRIMARY) ? 0x25 : 0x45;
-        const uint16_t lri_expected = (uint16_t)0x1E | ((uint16_t)lri_mid << 8);
-        int start = findFirstRecordOffset(level1packet, (int)packetposition,
-                                          0x1E, lri_mid, 0x1E);
-        if (start < 0) {
-          // No records at all - likely an error frame from the inverter.
-          if (gDCPowerMode == DCP_TRY_PRIMARY) {
-            logW("DC Power 0x251E unsupported on this inverter, falling back to 0x451E");
-            gDCPowerMode = DCP_TRY_ALT;
-          } else {
-            logW("DC Power 0x451E also unsupported, disabling DC Power query until reboot");
-            gDCPowerMode = DCP_DISABLED;
-          }
-        } else {
-          for (int i = start; i + 28 <= (int)packetposition - 3; i += 28) {
-            valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-            memcpy(&value, &level1packet[i + 8], 4);
-            uint8_t cls = level1packet[i + 0];
-            if (cls != 1 && cls != 2) break; // ran off the end of records
-            logI("DC Pdc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
-            if (valuetype != lri_expected) continue;
-            if (!isValidSpotValue(value)) continue;
-            if (cls == 1) pdc1_acc = value;
-            else if (cls == 2) pdc2_acc = value;
-          }
-        }
         innerstate = 3;
       }
     }
-    // else: fall through and try again until timeout
+    // else: try again until timeout
     break;
 
   case 2:
-    for (int i = 40 + 1; i + 28 <= packetposition - 3; i += 28)
     {
-      valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-      memcpy(&value, &level1packet[i + 8], 4);
-      uint8_t cls = level1packet[i + 0];
-
-      logD("DC Pdc record: cls=%u valuetype=0x%04X value=%lu", cls, valuetype, value);
-
-      // Accept whichever LRI variant we're currently trying. If the inverter
-      // answers cleanly via PPP we treat that as the active variant working.
       uint16_t lri_expected = (gDCPowerMode == DCP_TRY_ALT) ? 0x451E : 0x251E;
-      if (valuetype == lri_expected) {
+      bool found_record = false;
+      for (int i = 40 + 1; i + 28 <= packetposition - 3; i += 28)
+      {
+        valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
+        memcpy(&value, &level1packet[i + 8], 4);
+        uint8_t cls = level1packet[i + 0];
+
+        logD("DC Pdc record: cls=%u valuetype=0x%04X value=%lu", cls, valuetype, value);
+
+        if (valuetype != lri_expected) continue;
+        found_record = true; // also counts at night when the value is a sentinel
         if (!isValidSpotValue(value)) continue;
         if (cls == 1) pdc1_acc = value;
         else if (cls == 2) pdc2_acc = value;
+        memcpy(&datetime, &level1packet[i + 4], 4);
       }
-      memcpy(&datetime, &level1packet[i + 4], 4);
+      if (!found_record) {
+        // Error reply or empty answer: this LRI block isn't supported.
+        if (gDCPowerMode == DCP_TRY_PRIMARY) {
+          logW("DC Power 0x251E not supported (err 0x%04X), falling back to 0x451E", l2ErrorCode);
+          gDCPowerMode = DCP_TRY_ALT;
+        } else {
+          logW("DC Power 0x451E not supported either (err 0x%04X), deriving Pdc from U*I", l2ErrorCode);
+          gDCPowerMode = DCP_DISABLED;
+        }
+      }
     }
     innerstate++;
     break;
@@ -642,34 +610,8 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
       }
       else
       {
-        // Same short-frame fallback for the DC Voltage phase. Locate the first
-        // valid record header (cls=1|2, lri-low=0x1F or 0x21, lri-mid=0x45)
-        // rather than assuming a fixed offset; otherwise variable leading
-        // garbage (66/67/68 byte bodies seen in the wild) misaligns parsing.
-        logW("DC Voltage: PPP frame check failed, attempting short-frame parse");
+        logW("DC Voltage: invalid frame, skipping");
         logHexDump("DC Voltage raw body", level1packet, packetposition);
-
-        int start = findFirstRecordOffset(level1packet, (int)packetposition,
-                                          0x1F, 0x45, 0x21);
-        if (start < 0) {
-          logW("DC Voltage: short-frame parse - no record header found");
-        } else {
-          for (int i = start; i + 28 <= (int)packetposition - 3; i += 28) {
-            valuetype = level1packet[i + 1] + level1packet[i + 2] * 256;
-            memcpy(&value, &level1packet[i + 8], 4);
-            uint8_t cls = level1packet[i + 0];
-            if (cls != 1 && cls != 2) break;
-            logI("DC Udc/Idc short-frame: cls=%u lri=0x%04X value=%lu", cls, valuetype, value);
-            if (!isValidSpotValue(value)) continue;
-            if (valuetype == 0x451f) {
-              if (cls == 1) vdc1_acc = (float)value / 100.0f;
-              else if (cls == 2) vdc2_acc = (float)value / 100.0f;
-            } else if (valuetype == 0x4521) {
-              if (cls == 1) adc1_acc = (float)value / 1000.0f;
-              else if (cls == 2) adc2_acc = (float)value / 1000.0f;
-            }
-          }
-        }
         innerstate = 6;
       }
     }
@@ -699,20 +641,17 @@ bool ESP32_SMA_Inverter::getInstantDCPower()
 
   case 6:
     {
+      // If the inverter didn't return Pdc records (not every SunnyBoy exposes
+      // them) but did return U and I, derive P=U*I per string. Also guard
+      // against implausibly-large reported values.
+      if (pdc1_acc == 0 || pdc1_acc > MAX_SPOTDC) pdc1_acc = (unsigned long)(vdc1_acc * adc1_acc);
+      if (pdc2_acc == 0 || pdc2_acc > MAX_SPOTDC) pdc2_acc = (unsigned long)(vdc2_acc * adc2_acc);
+
       // Aggregate and publish whatever we managed to collect this cycle.
       spotpowerdc = pdc1_acc + pdc2_acc;
       spotvoltdc  = (vdc1_acc > 0 && vdc2_acc > 0) ? (vdc1_acc + vdc2_acc) / 2.0f
                    : (vdc1_acc > 0 ? vdc1_acc : vdc2_acc);
       spotampdc   = adc1_acc + adc2_acc;
-
-      // If the inverter didn't return Pdc records (common with the short-frame
-      // DC response on some SunnyBoys) but did return U and I, derive P=U*I.
-      // Also guard against implausibly-large reported values.
-      if (spotpowerdc == 0 || spotpowerdc > MAX_SPOTDC) {
-        if (spotvoltdc > 0 && spotampdc > 0) {
-          spotpowerdc = (unsigned long)(spotvoltdc * spotampdc);
-        }
-      }
 
       logI("DC Pwr=%lu Volt=%.2f Amp=%.3f", spotpowerdc, spotvoltdc, spotampdc);
 
@@ -879,78 +818,34 @@ bool ESP32_SMA_Inverter::checkIfNeedToSetInverterTime()
 void ESP32_SMA_Inverter::setInverterTime()
 {
   //Sets inverter time for those SMA inverters which don't have a realtime clock (Tripower 8000 models for instance)
+  // Packet layout follows SBFspot's SetPlantTime_V1(); no reply is expected.
   logD("setInverterTime(%i) " , innerstate);
 
-  //Payload...
+  time_t currenttime = esp32rtc.getEpoch(); // UTC seconds since the epoch
+  struct tm tm_local;
+  localtime_r(&currenttime, &tm_local);
+  // TIME_ZONE is the standard-time offset; TZ_INFO (if set) supplies DST.
+  uint32_t isdst = (tm_local.tm_isdst > 0) ? 1 : 0;
+  uint32_t tzOffset = (uint32_t)(timeZoneOffset + (long)isdst * 3600);
+  logI("Setting inverter time to %lu (tz offset %lu s, dst %lu)", (unsigned long)currenttime, (unsigned long)tzOffset, (unsigned long)isdst);
 
-  //** 8C 0A 02 00 F0 00 6D 23 00 00 6D 23 00 00 6D 23 00
-  //   9F AE 99 4F   ==Thu, 26 Apr 2012 20:22:55 GMT  (now)
-  //   9F AE 99 4F   ==Thu, 26 Apr 2012 20:22:55 GMT  (now)
-  //   9F AE 99 4F   ==Thu, 26 Apr 2012 20:22:55 GMT  (now)
-  //   01 00         ==Timezone +1 hour for BST ?
-  //   00 00
-  //   A1 A5 99 4F   ==Thu, 26 Apr 2012 19:44:33 GMT  (strange date!)
-  //   01 00 00 00
-  //   F3 D9         ==Checksum
-  //   7E            ==Trailer
-
-  //Set time to Feb
-
-  //2A 20 63 00 5F 00 B1 00 0B FF B5 01
-  //7E 5A 00 24 A3 0B 50 DD 09 00 FF FF FF FF FF FF 01 00
-  //7E FF 03 60 65 10 A0 FF FF FF FF FF FF 00 00 78 00 6E 21 96 37 00 00 00 00 00 00 01
-  //** 8D 0A 02 00 F0 00 6D 23 00 00 6D 23 00 00 6D 23 00
-  //14 02 2B 4F ==Thu, 02 Feb 2012 21:37:24 GMT
-  //14 02 2B 4F ==Thu, 02 Feb 2012 21:37:24 GMT
-  //14 02 2B 4F  ==Thu, 02 Feb 2012 21:37:24 GMT
-  //00 00        ==No time zone/BST not applicable for Feb..
-  //00 00
-  //AD B1 99 4F  ==Thu, 26 Apr 2012 20:35:57 GMT
-  //01 00 00 00
-  //F6 87        ==Checksum
-  //7E
-
-  //2A 20 63 00 5F 00 B1 00 0B FF B5 01
-  //7E 5A 00 24 A3 0B 50 DD 09 00 FF FF FF FF FF FF 01 00
-  //7E FF 03 60 65 10 A0 FF FF FF FF FF FF 00 00 78 00 6E 21 96 37 00 00 00 00 00 00 1C
-  //** 8D 0A 02 00 F0 00 6D 23 00 00 6D 23 00 00 6D 23 00
-  //F5 B3 99 4F
-  //F5 B3 99 4F
-  //F5 B3 99 4F 01 00 00 00 28 B3 99 4F 01 00 00 00
-  //F3 C7 7E
-
-  //2B 20 63 00 5F 00 DD 00 0B FF B5 01
-  //7E 5A 00 24 A3 0B 50 DD 09 00 FF FF FF FF FF FF 01 00
-  //7E FF 03 60 65 10 A0 FF FF FF FF FF FF 00 00 78 00 6E 21 96 37 00 00 00 00 00 00 08
-  //** 80 0A 02 00 F0 00 6D 23 00 00 6D 23 00 00 6D 23 00
-  //64 76 99 4F ==Thu, 26 Apr 2012 16:23:00 GMT
-  //64 76 99 4F ==Thu, 26 Apr 2012 16:23:00 GMT
-  //64 76 99 4F  ==Thu, 26 Apr 2012 16:23:00 GMT
-  //58 4D   ==19800 seconds = 5.5 hours
-  //00 00
-  //62 B5 99 4F
-  //01 00 00 00
-  //C3 27 7E
-
-  
-  time_t currenttime = esp32rtc.getEpoch(); // Returns the ESP32 RTC in number of seconds since the epoch (normally 01/01/1970)
-  //digitalClockDisplay(currenttime);
   writePacketHeader(level1packet);
-  writeSMANET2PlusPacket(level1packet, 0x09, 0x00, packet_send_counter, 0, 0, 0);
-  writeSMANET2ArrayFromProgmem(level1packet, smanet2settime, sizeof(smanet2settime));
+  writeSMANET2PlusPacket(level1packet, 0x10, 0xA0, packet_send_counter, 0, 0, 0);
+  writeSMANET2SingleByte(level1packet, 0x80); // high byte of (pcktID | 0x8000)
+  writeSMANET2Long(level1packet, 0xF000020AUL);
+  writeSMANET2Long(level1packet, 0x00236D00UL);
+  writeSMANET2Long(level1packet, 0x00236D00UL);
+  writeSMANET2Long(level1packet, 0x00236D00UL);
   writeSMANET2Long(level1packet, currenttime);
   writeSMANET2Long(level1packet, currenttime);
   writeSMANET2Long(level1packet, currenttime);
-  // writeSMANET2Long(level1packet, timeZoneOffset);
-  writeSMANET2uint(level1packet, timeZoneOffset);
-  writeSMANET2uint(level1packet, 0);
-  writeSMANET2Long(level1packet, currenttime); //No idea what this is for...
-  writeSMANET2ArrayFromProgmem(level1packet, smanet2packet0x01000000, sizeof(smanet2packet0x01000000));
+  writeSMANET2Long(level1packet, tzOffset | isdst);
+  writeSMANET2Long(level1packet, 1);
+  writeSMANET2Long(level1packet, 1);
   writeSMANET2PlusPacketTrailer(level1packet);
   writePacketLength(level1packet);
   sendPacket(level1packet);
   packet_send_counter++;
-  //debugMsgln(" done");
 }
 
 bool ESP32_SMA_Inverter::getGridFrequency()
@@ -1636,6 +1531,7 @@ bool ESP32_SMA_Inverter::disconnectAndLogoff()
   logI("disconnectAndLogoff: sending SMA logoff and closing BT");
   writePacketHeader(level1packet, sixff);
   writeSMANET2PlusPacket(level1packet, 0x08, 0xa0, packet_send_counter, 0x00, 0x03, 0x03);
+  writeSMANET2SingleByte(level1packet, 0x80); // high byte of (pcktID | 0x8000)
   writeSMANET2Long(level1packet, 0xFFFD010EUL); // command identifier (LE on the wire)
   writeSMANET2Long(level1packet, 0xFFFFFFFFUL); // padding
   writeSMANET2PlusPacketTrailer(level1packet);
@@ -1643,7 +1539,7 @@ bool ESP32_SMA_Inverter::disconnectAndLogoff()
   sendPacket(level1packet);
   packet_send_counter++;
 
-  btReset();
+  btDisconnect();
   resetSMANetCounters();
   return true;
 }

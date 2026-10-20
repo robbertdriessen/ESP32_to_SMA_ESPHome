@@ -17,8 +17,15 @@
 #define WIFI_SSID "xxx"
 #define WIFI_PASSWORD "xxx"
 
-// Timezone offset from GMT in hours
-#define TIME_ZONE 2
+// Standard-time (winter) offset from GMT in hours
+#define TIME_ZONE 1
+// POSIX TZ string so local time (daily max-power reset, inverter clock)
+// follows summer time. Comment out to use the fixed TIME_ZONE offset only.
+#define TZ_INFO "CET-1CEST,M3.5.0,M10.5.0/3"
+
+// Pause between poll cycles in ms (default 60000). Every cycle is a full
+// BT connect + logon + ~13 queries + logoff, so don't go much lower.
+//#define METRIC_UPDATE_MS 60000UL
 
 // MQTT server hostname/IP address
 #define MQTT_SERVER "mqtt.server"

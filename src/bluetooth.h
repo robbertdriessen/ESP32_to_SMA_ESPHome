@@ -21,6 +21,9 @@ extern unsigned char myBTAddress[6] ; // BT address of ESP32.
 
 bool BTStart();
 bool BTCheckConnected();
+// Close the SPP link only; the next BTStart() reconnects without
+// re-initialising the stack.
+void btDisconnect();
 // Forcibly tear down the BT stack so the next BTStart() goes through
 // SerialBT.begin() again. Used by the loop's stale-link watchdog.
 void btReset();

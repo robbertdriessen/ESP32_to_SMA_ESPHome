@@ -7,7 +7,7 @@ already been done. Read this before touching the protocol code.
 ## What this firmware does
 
 ESP32 connects to an SMA SunnyBoy inverter over **Classic Bluetooth** (not BLE),
-speaks the SMA bluetooth protocol variant, polls metrics on a ~12s cycle, and
+speaks the SMA bluetooth protocol variant, polls metrics once a minute (`METRIC_UPDATE_MS`), and
 publishes them to MQTT. Home Assistant entities are auto-discovered via the
 `homeassistant/sensor/<host>/<topic>/config` retained topics published in
 [ESP32_SMA.cpp:onConnectionEstablished](src/ESP32_SMA.cpp).
@@ -34,10 +34,16 @@ After the SMANET2+ header, every query in this codebase emits **13 bytes**:
 [0x80] [LE 4-byte command] [LE 4-byte first LRI] [LE 4-byte last LRI]
 ```
 
+The leading `0x80` is the high byte of SBFspot's `pcktID | 0x8000`;
+`writeSMANET2PlusPacket()` ends with the low byte (`packet_send_counter`).
+Every payload written after that header must therefore start with `0x80`
+(the logoff packet used to forget it).
+
 In source the bytes are split between the **shared 4-byte prefix**
-`smanet2packetx80x00x02x00 = {0x80,0x00,0x02,0x00}` and the **9-byte query**
-`{cmd-hi, mask, LRI-first[1..3], 0xFF, LRI-last[1..3]}`. That layout *only
-encodes commands whose mask byte (3rd byte of `command`) is 0x00.* Commands with
+`smanet2packetx80x00x02x00 = {0x80,0x00,0x02,0x00}` (pcktID-hi + command
+bytes 0..2) and the **9-byte query** `{cmd-hi, LRI-first[0..3], LRI-last[0..3]}`.
+Because the prefix hardcodes command byte 2 (the "mask") as 0x00, that layout
+*only encodes commands whose mask byte is 0x00.* Commands with
 mask 0x80 (DeviceStatus, GridRelayStatus, SpotDCPower, SpotDCVoltage) **must
 bake the full 13-byte form into their packet array** and the call site MUST
 NOT prepend `smanet2packetx80x00x02x00`. Tripping over this took an entire
@@ -60,6 +66,25 @@ session — see git history for `INIT_smanet2devicestatus`,
 | **Device Status (OperationHealth)** | **0x51800200** | **0x00214800** | **0x002148FF** | 40-byte records (mask=0x80!) |
 | **Grid Relay Status** | **0x51800200** | **0x00416400** | **0x004164FF** | 40-byte records (mask=0x80!) |
 
+### L2 header offsets (reassembled frame, `level1packet[0]` = 0x7E)
+
+`[23..24]` error code (0 = OK, 0x0100 = bad password on logon, other =
+LRI not supported) → `l2ErrorCode` after `validateChecksum()`.
+`[25..26]` fragment id, `[27..28]` packet id (`[27]` checked against
+`lastpacketindex`), records start at `[41]`. Verified against a full packet
+dump in the July 2026 logs.
+
+### BT fragmentation
+
+The inverter's BT module splits any L2 frame that doesn't fit one L1 packet:
+first one or more L1 packets with **cmd 0x0008**, then the final one with the
+expected cmd (0x0001). `getPacket()` / `waitForMultiPacket()` append fragments
+into `level1packet[]` (512 bytes) until the final cmd arrives, like SBFspot's
+`getPacket()`. Responses with 3+ spot records (DC Udc/Idc for two strings =
+156 bytes) are always fragmented. Before Oct 2026 the code restarted at
+index 0 for every L1 packet and kept only the last fragment — that was the
+whole "DC short frame" mystery.
+
 Status (0x2148, 0x4164) records are **40 bytes** long. Spot value records are
 **28 bytes**. Energy records (Wh counters) are **16 bytes** with a 64-bit value
 at +8. SBFspot derives record size dynamically (line 2427) — we hardcode.
@@ -81,8 +106,29 @@ nothing. See `getInstantDCPower()` in [src/ESP32_SMA_Inverter.cpp](src/ESP32_SMA
 ## State machine
 
 [ESP32_SMA.cpp:loop](src/ESP32_SMA.cpp) drives a state machine
-([mainstate.h](src/mainstate.h)). After login it cycles through states 5..17
-querying one metric per state, then sleeps `METRIC_UPDATE_MS` (10s) and loops.
+([mainstate.h](src/mainstate.h)). Per cycle: BT connect → init → logon → states 3..17 (one metric per state) →
+`MAINSTATE_DISCONNECT` (SMA logoff + close the SPP link) → sleep
+`METRIC_UPDATE_MS` (default 60 s, override in `site_details.h`) → repeat.
+A failed logon (no reply or non-zero L2 error code) jumps straight to
+`MAINSTATE_DISCONNECT` and retries next cycle.
+
+### BT lifecycle and watchdogs
+
+The BT **stack** stays up between cycles (`btDisconnect()` only closes the
+link). `SerialBT.end()`/`begin()` every cycle (≈5000×/day at the old 10 s
+interval) was the April 2026 approach; on 2026-07-22 BT stopped connecting and
+never came back for a week, with no reboot. Escalation ladder now:
+
+1. `BTStart()`: 3 failed connects in a row → `btReset()` (full stack restart).
+2. Stale link (no BT byte for 30 s mid-cycle) → `btReset()` + back to INIT.
+3. Cycle longer than 120 s → abandoned via `MAINSTATE_DISCONNECT`.
+4. No completed cycle for 15 min → `ESP.restart()`.
+
+The heartbeat log line includes `heap`/`minheap`; watch them for leaks.
+
+WiFi at the install location is weak (−85…−95 dBm, many MQTT reconnects per
+day). WiFi and Classic BT share one radio on the ESP32, so a weak WiFi link
+also costs BT airtime. An Ethernet ESP32 board would remove that problem.
 
 The "extended" metric functions (states 13..17) are guarded by:
 - `FETCH_EXTENDED_AC_METRICS` — getACVoltage, getACCurrent
@@ -117,7 +163,10 @@ only if you have a Sunny Tripower or similar three-phase model.
 Not committed; copy from `site_details-example.h`. Holds:
 - WiFi creds, MQTT broker, MQTT topic base
 - SMA inverter Bluetooth MAC (reversed) and 4-digit user passcode
-- Time zone offset
+- Time zone: `TIME_ZONE` (standard-time hours) plus optional `TZ_INFO`
+  POSIX string for DST (used for the daily max-power reset and when setting
+  the inverter clock)
+- `METRIC_UPDATE_MS` poll pause (optional, default 60 s)
 - NTP servers
 - UDP syslog target (recommend setting this — see "Logging" below)
 - `FETCH_*` toggles described above
@@ -187,9 +236,11 @@ Device Status:|DC Pwr=|DC.*phase|DC.*checksum|First 5 bytes"
 ```
 
 Default log level is `Info` (`Logging::setLevel(esp32m::Info)` in
-[ESP32_SMA.cpp:setup](src/ESP32_SMA.cpp)). To see `logD()` output (e.g. record
-value-types during parsing), bump to `Debug` and rebuild. Don't leave it at
-Debug long — UDP volume gets noisy.
+[ESP32_SMA.cpp:setup](src/ESP32_SMA.cpp)). Until Oct 2026
+`ESP32Loggable`'s constructor forced every class logger to `Debug`, which
+silently overrode that and produced ~80 MB/day of syslog. To see `logD()`
+output (e.g. record value-types during parsing), bump the global level to
+`Debug` and rebuild. Don't leave it at Debug long.
 
 ## What's known to work
 
@@ -204,30 +255,27 @@ After the April 2026 fix sweep:
 - **Device Status** (newly working — was silently failing because of mask byte
   + record-size bugs)
 - Software-tracked Max Power Today
-- Inverter time vs RTC drift correction
+- Inverter time vs RTC drift correction (drift is normally ~12-14 s, so the
+  set-time packet — rewritten to SBFspot's SetPlantTime_V1 layout in Oct 2026 —
+  has not actually been exercised on hardware yet)
 
-## What's known *not* to work
+## DC values — fixed in Oct 2026, verify after flashing
 
-- **DC values** (`instant_dc/_vdc/_adc`, per-string `_pdc1/_pdc2`,
-  `_vdc1/_vdc2`, `_adc1/_adc2`).
-  - The DC packet *now reaches the inverter* (the response went from 10 bytes
-    of error to a 66-byte payload after the mask-byte fix), but the response
-    body starts with `82/84/86 00 00 01 00` instead of the expected PPP
-    framing `7E FF 03 60 65`. `containsLevel2Packet()` rejects it as malformed
-    and the parser bails with "DC Voltage: checksum failed, skipping".
-  - Hypothesis: the inverter is responding to status-class commands
-    (`0x53800200`) using a different framing than spot-value commands
-    (`0x51000200`). Some firmware-locked SunnyBoys also genuinely don't expose
-    DC via this protocol path.
-  - Next thing to try: dump the raw response bytes (full 84-byte packet, not
-    just first 5) when the L2 header check fails, see if the body actually
-    contains records with valid LRIs at predictable offsets, or if it's an
-    error frame. There's a hard 4-second per-phase timeout in
-    `getInstantDCPower` that prevents the boot loop we hit earlier — that
-    ceiling means we can iterate safely.
-  - SBFspot also has a `SpotDCPower_2` variant (`first=0x00451E00,
-    last=0x00451EFF`) for inverters where the primary location returns
-    nothing. If the response actually contains records, try SpotDCPower_2.
+DC (`instant_dc/_vdc/_adc`, per-string `_pdc*/_vdc*/_adc*`) failed because of
+the fragmentation bug above, not because of the inverter. The old
+"short-frame parser" only ever saw the second fragment (body starting
+`8x 00 00 01 00`, i.e. the middle of a record), so Idc came through and Udc
+never did. With reassembly Udc and Idc should both parse.
+
+The Pdc query (0x251E, then SpotDCPower_2 0x451E) returned no records on this
+SunnyBoy. If neither LRI block yields a Pdc record the query is disabled until
+reboot and Pdc is derived per string as Udc × Idc.
+
+Check after flashing:
+
+```bash
+grep -E "DC Pwr=|DC Power 0x|L2 error code" "$LOG" | tail
+```
 
 ## Things that are duplicates / leftovers
 

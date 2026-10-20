@@ -40,7 +40,7 @@ using namespace esp32m;
 
 // Normal metrics publish interval (ms) fallback if not defined elsewhere
 #ifndef METRIC_UPDATE_MS
-#define METRIC_UPDATE_MS 10000UL
+#define METRIC_UPDATE_MS 60000UL
 #endif
 
 #define INIT_smanet2packetx80x00x02x00 {0x80, 0x00, 0x02, 0x00}
@@ -74,8 +74,6 @@ using namespace esp32m;
 #define INIT_smanet2packetdcpower_2 { 0x80, 0x00, 0x02, 0x80, 0x53,  0x00, 0x1E, 0x45, 0x00,  0xFF, 0x1E, 0x45, 0x00 }
 // SpotDCVoltage  (SBFspot): command=0x53800200, first=0x00451F00, last=0x004521FF -> Udc/Idc per string
 #define INIT_smanet2packetdcvoltage { 0x80, 0x00, 0x02, 0x80, 0x53,  0x00, 0x1F, 0x45, 0x00,  0xFF, 0x21, 0x45, 0x00 }
-
-#define INIT_smanet2settime {0x8c, 0x0a, 0x02, 0x00, 0xf0, 0x00, 0x6d, 0x23, 0x00, 0x00, 0x6d, 0x23, 0x00, 0x00, 0x6d, 0x23, 0x00}
 
 #define INIT_smanet2totalyieldWh { 0x54, 0x00, 0x01, 0x26, 0x00, 0xFF, 0x01, 0x26, 0x00}
 
@@ -123,7 +121,6 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
             smanet2packetdcpower INIT_smanet2packetdcpower,
             smanet2packetdcpower_2 INIT_smanet2packetdcpower_2,
             smanet2packetdcvoltage INIT_smanet2packetdcvoltage,
-            smanet2settime INIT_smanet2settime,
             smanet2totalyieldWh INIT_smanet2totalyieldWh,
             smanet2gridfrequency INIT_smanet2gridfrequency,
             smanet2gridvoltage INIT_smanet2gridvoltage,
@@ -167,13 +164,15 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         bool getDeviceStatus();
         bool getGridErrors();
 
-        // Send the SMA logoff command (cmd 0xFFFD010E) and tear down the BT
-        // stack. Mirrors SBFspot's connect-poll-logoff pattern: closing the
-        // session at cycle boundaries avoids the BT-stack staleness that
-        // accumulates on long-lived sessions.
+        // Send the SMA logoff command (cmd 0xFFFD010E) and close the BT link
+        // (the BT stack itself stays up). Mirrors SBFspot's
+        // connect-login-poll-logoff pattern.
         bool disconnectAndLogoff();
 
         void resetInnerstate() { innerstate = 0; };
+
+        // Result of the last logonSMAInverter() run (valid once it returned true).
+        bool isLoggedOn() const { return logonOk; }
 
     protected:
         EspMQTTClient& _client;
@@ -189,7 +188,6 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         prog_uchar PROGMEM smanet2packetdcpower[13];
         prog_uchar PROGMEM smanet2packetdcpower_2[13];
         prog_uchar PROGMEM smanet2packetdcvoltage[13];
-        prog_uchar PROGMEM smanet2settime[17];
         prog_uchar PROGMEM smanet2totalyieldWh[9];
         prog_uchar PROGMEM smanet2gridfrequency[9];
         prog_uchar PROGMEM smanet2gridvoltage[9];
@@ -217,7 +215,6 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
         const size_t sizeof_smanet2packetdcpower = sizeof(smanet2packetdcpower);
         const size_t sizeof_smanet2packetdcpower_2 = sizeof(smanet2packetdcpower_2);
         const size_t sizeof_smanet2packetdcvoltage = sizeof(smanet2packetdcvoltage);
-        const size_t sizeof_smanet2settime = sizeof(smanet2settime);
         const size_t sizeof_smanet2totalyieldWh = sizeof(smanet2totalyieldWh);
         const size_t sizeof_smanet2gridfrequency = sizeof(smanet2gridfrequency);
         const size_t sizeof_smanet2gridvoltage = sizeof(smanet2gridvoltage);
@@ -245,6 +242,7 @@ class ESP32_SMA_Inverter : public ESP32Loggable {
 
         //function call innerstate variable
         uint8_t innerstate = 0;
+        bool logonOk = false;
 
         uint64_t currentvalue = 0;
         unsigned int valuetype = 0;

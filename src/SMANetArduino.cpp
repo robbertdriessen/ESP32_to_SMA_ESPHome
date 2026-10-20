@@ -32,6 +32,8 @@ unsigned char level1packet[maxlevel1packetsize];
 
 bool escapenextbyte = false;
 
+unsigned int l2ErrorCode = 0;
+
 void resetSMANetCounters()
 {
   packet_send_counter = 0;
@@ -155,13 +157,16 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
   //Serial.println(" ");
   //Serial.print( "packetlength-level1headerlength = " );
   //Serial.println( packetlength-level1headerlength );
-  for (int i = 0; i < (packetlength - level1headerlength); i++)
+  bool overflow = false;
+  for (int i = 0; i < (int)(packetlength - level1headerlength); i++)
   {
-    //Serial.print( " index = " );
-    //Serial.print( index );
-    //Serial.print( " " );
   unsigned char vb = getByte();
   if (btTimedOut) { log_w("Timeout reading body"); return 0xFFFF; }
+  if (index >= maxlevel1packetsize) {
+    // Keep draining so the stream stays aligned on the next 0x7E.
+    overflow = true;
+    continue;
+  }
   level1packet[index] = vb;
 
     //Keep 1st byte raw unescaped 0x7e
@@ -189,6 +194,12 @@ unsigned int readLevel1PacketFromBluetoothStream(int index)
   //                                               than the amount of data actually added to level1packet[]
   packetposition = index; // Index into level1packet[] of the first byte after the Level 1 header stuff.
   //                        The byte at level1packet[index] will be 0x7E for a level 2 packet. NOT 0x7E for a level 1 packet.
+
+  if (overflow)
+  {
+    log_w("L1 packet overflows %d byte buffer, discarding", maxlevel1packetsize);
+    return 0xFFFF;
+  }
 
   if (errorCodePCS || errorCodeVSA || errorCodePIFM)
   {
@@ -259,22 +270,25 @@ bool containsLevel2Packet()
 //   if the packet has a checksum error, or it's not addressed to me, etc...
 // This function just discards the packet if there is an error, returns true on success
 // false otherwise, at which point it should be called again
+//
+// Like SBFspot's getPacket(), L1 fragments (cmd 0x0008) are appended to
+// level1packet[] until the final fragment carrying cmdcodetowait arrives, so
+// the caller always sees one complete L2 frame starting at level1packet[0].
+#define L1_FRAGMENT_CMD 0x0008
+#define MAX_L1_PACKETS_PER_READ 8
 
-unsigned int lastGetPacket = -1;
 bool getPacket(unsigned int cmdcodetowait)
 {
-  if (lastGetPacket != cmdcodetowait)
+  prepareToReceive();
+  for (int n = 0; n < MAX_L1_PACKETS_PER_READ; n++)
   {
-    prepareToReceive();
-    lastGetPacket = cmdcodetowait;
-  }
-  cmdcode = readLevel1PacketFromBluetoothStream(0);
-  // debugMsg("Command code: ");
-  // debugMsgLn(String(cmdcode));
-  if (cmdcode == cmdcodetowait)
-  {
-    return true;
-    lastGetPacket = -1;
+    cmdcode = readLevel1PacketFromBluetoothStream(packetposition);
+    if (cmdcode == cmdcodetowait)
+      return true;
+    if (cmdcode == 0xFFFF)
+      return false;
+    if (cmdcode != L1_FRAGMENT_CMD)
+      prepareToReceive(); // unrelated packet, drop whatever we collected
   }
   return false;
 }
@@ -289,24 +303,9 @@ void waitForPacket(unsigned int xxx)
 // The difference to the function above is that it will search deeply through the level1packet[] array.
 // Level 2 messages (PPP messages) follow the Level 1 packet header part. Each Level 2 packet starts with
 //   7E FF 03 60 65.
-unsigned int lastMulticmdcode = -1;
 bool waitForMultiPacket(unsigned int cmdcodetowait)
 {
-
-  //prepareToReceive();
-  //Serial.println(" ");
-  prepareToReceive();
-  //Serial.println("*** In waitForMultiPacket. About to call readLevel1PacketFromBluetoothStream(0) ***");
-  //cmdcode = readLevel1PacketFromBluetoothStream(packetposition);
-  lastMulticmdcode = readLevel1PacketFromBluetoothStream(0);
-  //Serial.println(" ");
-  //Serial.print("*** Done reading packet. cmdcode = ");
-  //Serial.println(cmdcode);
-  if (lastMulticmdcode == cmdcodetowait)
-    return true;
-
-  //Serial.println("Now returning from 'waitForMultiPacket'.");
-  return false;
+  return getPacket(cmdcodetowait);
 }
 
 void writeSMANET2Long(unsigned char *btbuffer, unsigned long v)
@@ -512,6 +511,7 @@ void debugPrintHexByte(unsigned char b)
 bool validateChecksum()
 {
   //Checks the validity of a LEVEL2 type SMA packet
+  l2ErrorCode = 0;
 
   if (!containsLevel2Packet())
   {
@@ -549,11 +549,12 @@ bool validateChecksum()
   //if (1==1)
   if ((level1packet[packetposition - 3] == (FCSChecksum & 0x00ff)) && (level1packet[packetposition - 2] == ((FCSChecksum >> 8) & 0x00ff)))
   {
-    if ((level1packet[23 + 1] != 0) || (level1packet[24 + 1] != 0))
-    {
-      log_w("chksum err");
-      error();
-    }
+    // L2 error code lives at bytes 23-24 (SBFspot: get_short(pcktBuf + 23)).
+    // A non-zero code is a valid answer ("LRI not supported", "bad password"),
+    // not a reason to reboot; callers decide what to do with it.
+    l2ErrorCode = level1packet[23] + level1packet[24] * 256;
+    if (l2ErrorCode != 0)
+      log_w("Inverter returned L2 error code 0x%04X", l2ErrorCode);
     return true;
   }
   else

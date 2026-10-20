@@ -37,6 +37,14 @@
 // Track if we've aligned ESP32rtc to SNTP time to avoid repeated adjustments
 static bool gRtcAligned = false;
 static unsigned long gBtEarliestStartMs = 0;
+// millis() of the last poll cycle that ran all the way through. If this gets
+// too old the device reboots: in July 2026 the BT link died and the firmware
+// sat in "Attempting BT connect..." for a week without ever recovering.
+static unsigned long gLastCycleOkMs = 0;
+// millis() at which the current cycle connected; bounds the cycle duration.
+static unsigned long gCycleStartMs = 0;
+static const unsigned long NO_CYCLE_REBOOT_MS = 15UL * 60UL * 1000UL;
+static const unsigned long CYCLE_TIMEOUT_MS = 120UL * 1000UL;
 
 
 using namespace esp32m;
@@ -103,10 +111,10 @@ void ESP32_SMA::onConnectionEstablished()
   mqttclient.publish("homeassistant/sensor/" HOST "/signal/config", "{\"name\": \"" FRIENDLY_NAME " Signal Strength\", \"state_topic\": \"" MQTT_BASE_TOPIC "signal\", \"unique_id\": \"" HOST "-signal\", \"unit_of_measurement\": \"dB\", \"device\": {\"identifiers\": [\"" HOST "-device\"], \"name\": \"" FRIENDLY_NAME "\"}}", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/generation_today/config", "{\"name\": \"" FRIENDLY_NAME " Power Generation Today\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "generation_today\", \"unique_id\": \"" HOST "-generation_today\", \"unit_of_measurement\": \"Wh\", \"state_class\": \"total_increasing\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/generation_total/config", "{\"name\": \"" FRIENDLY_NAME " Power Generation Total\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "generation_total\", \"unique_id\": \"" HOST "-generation_total\", \"unit_of_measurement\": \"Wh\", \"state_class\": \"total_increasing\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
-  mqttclient.publish("homeassistant/sensor/" HOST "/instant_ac/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous AC Power\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_ac\", \"unique_id\": \"" HOST "-instant_ac\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
-  mqttclient.publish("homeassistant/sensor/" HOST "/instant_dc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Power\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_dc\", \"unique_id\": \"" HOST "-instant_dc\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
-  mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Voltage\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc\", \"unique_id\": \"" HOST "-instant_vdc\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
-  mqttclient.publish("homeassistant/sensor/" HOST "/instant_adc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Ampere\", \"device_class\": \"energy\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_adc\", \"unique_id\": \"" HOST "-instant_adc\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_ac/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous AC Power\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_ac\", \"unique_id\": \"" HOST "-instant_ac\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_dc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Power\", \"device_class\": \"power\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_dc\", \"unique_id\": \"" HOST "-instant_dc\", \"unit_of_measurement\": \"W\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Voltage\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc\", \"unique_id\": \"" HOST "-instant_vdc\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
+  mqttclient.publish("homeassistant/sensor/" HOST "/instant_adc/config", "{\"name\": \"" FRIENDLY_NAME " Instantinous DC Ampere\", \"device_class\": \"current\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_adc\", \"unique_id\": \"" HOST "-instant_adc\", \"unit_of_measurement\": \"A\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   // Per-string metrics if available
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc1/config", "{\"name\": \"" FRIENDLY_NAME " DC Voltage 1\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc1\", \"unique_id\": \"" HOST "-instant_vdc1\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
   mqttclient.publish("homeassistant/sensor/" HOST "/instant_vdc2/config", "{\"name\": \"" FRIENDLY_NAME " DC Voltage 2\", \"device_class\": \"voltage\", \"state_topic\": \"" MQTT_BASE_TOPIC "instant_vdc2\", \"unique_id\": \"" HOST "-instant_vdc2\", \"unit_of_measurement\": \"V\", \"state_class\": \"measurement\", \"device\": {\"identifiers\": [\"" HOST "-device\"]} }", true);
@@ -216,7 +224,12 @@ void ESP32_SMA::setup()
     Serial.printf("SNTP sync event, now=%lu\n", (unsigned long)now);
   });
 #endif
+#ifdef TZ_INFO
+  // POSIX TZ string, handles DST (e.g. "CET-1CEST,M3.5.0,M10.5.0/3")
+  configTzTime(TZ_INFO, NTP_SERVER, NTP_SERVER2, NTP_SERVER3);
+#else
   configTime(timeZoneOffset, 0, NTP_SERVER, NTP_SERVER2, NTP_SERVER3);
+#endif
   if (WiFi.status() == WL_CONNECTED) {
     String ipStr = WiFi.localIP().toString();
     logW("WiFi connected: %s -> %s" , WIFI_SSID, ipStr.c_str());
@@ -235,6 +248,7 @@ void ESP32_SMA::setup()
   next5Minute = millis() + 30000; // first 5-min tick after 30s
   nextHour = millis() + 5 * 60 * 1000; // first hour tick after 5 min
   nextDay = millis() + 60 * 60 * 1000; // first day tick after 1 hour
+  gLastCycleOkMs = millis();
 }
 
 void ESP32_SMA::everySecond()
@@ -244,7 +258,8 @@ void ESP32_SMA::everySecond()
   hb++;
   if ((hb % 5) == 0) {
     // Debug heartbeat every 5s
-    logI("heartbeat t=%lu rssi=%d", ESP32rtc.getEpoch(), WiFi.RSSI());
+    logI("heartbeat t=%lu rssi=%d heap=%u minheap=%u", ESP32rtc.getEpoch(), WiFi.RSSI(),
+         ESP.getFreeHeap(), ESP.getMinFreeHeap());
     if (mqttclient.isConnected()) {
       time_t now = ESP32rtc.getEpoch();
       struct tm tm_utc;
@@ -297,6 +312,16 @@ void ESP32_SMA::loop()
 {
   struct tm timeinfo;
   mqttclient.loop();
+
+  // Last-resort recovery: no complete poll cycle for a long time (BT stack
+  // wedged, WiFi gone, ...). A clean reboot is the only thing that reliably
+  // brings the ESP32 BT controller back.
+  if (millis() - gLastCycleOkMs > NO_CYCLE_REBOOT_MS) {
+    logE("No successful poll cycle for %lu min (mainstate=%s), rebooting",
+         (millis() - gLastCycleOkMs) / 60000UL, mainstate.toString().c_str());
+    delay(1000); // give the UDP/serial appenders a moment to flush
+    ESP.restart();
+  }
   // server.handleClient();
   // If WiFi isn't up yet, don't start/hammer Bluetooth. Give WiFi/MQTT time to connect.
   if (WiFi.status() != WL_CONNECTED) {
@@ -408,6 +433,18 @@ void ESP32_SMA::loop()
     }
   }
 
+  // Cycle watchdog. A healthy cycle takes a few seconds; one that keeps
+  // receiving bytes but never progresses (e.g. retrying a query the inverter
+  // keeps rejecting) is abandoned and retried after the normal pause.
+  if (mainstate >= MAINSTATE_INIT_SMA_CONNECTION
+      && mainstate != MAINSTATE_DISCONNECT
+      && (millis() - gCycleStartMs) > CYCLE_TIMEOUT_MS) {
+    logW("Poll cycle took over %lus (mainstate=%s), abandoning it",
+         CYCLE_TIMEOUT_MS / 1000UL, mainstate.toString().c_str());
+    mainstate = MAINSTATE_DISCONNECT;
+    smaInverter.resetInnerstate();
+  }
+
   log_d("Loop mainstate: %s", mainstate.toString().c_str());
 
   switch (mainstate)
@@ -417,6 +454,7 @@ void ESP32_SMA::loop()
     {
       mainstate++;
       smaInverter.resetInnerstate();
+      gCycleStartMs = millis();
     }
     else
     {
@@ -436,7 +474,10 @@ void ESP32_SMA::loop()
   case MAINSTATE_LOGON_SMA_INVERTER:
     if (smaInverter.logonSMAInverter())
     {
-      mainstate++;
+      if (smaInverter.isLoggedOn())
+        mainstate++;
+      else
+        mainstate = MAINSTATE_DISCONNECT; // skip the queries, retry next cycle
       smaInverter.resetInnerstate();
     }
     break;
@@ -561,15 +602,15 @@ void ESP32_SMA::loop()
     {
       mainstate++;
       smaInverter.resetInnerstate();
+      gLastCycleOkMs = millis();
     }
     break;
 
   case MAINSTATE_DISCONNECT: //18:
     // SBFspot pattern: close the BT session at the end of every poll cycle.
-    // Long-lived sessions accumulate BT-stack staleness (we were seeing
-    // ~3-4 BT timeouts/min). disconnectAndLogoff() sends the SMA logoff
-    // command, tears down the stack, and resets packet counters; the next
-    // cycle re-enters MAINSTATE_INIT and does a fresh connect+login.
+    // disconnectAndLogoff() sends the SMA logoff command, closes the SPP link
+    // (the BT stack stays up) and resets packet counters; the next cycle
+    // re-enters MAINSTATE_INIT and does a fresh connect+login.
     smaInverter.disconnectAndLogoff();
     smaInverter.resetInnerstate();
     mainstate = MAINSTATE_INIT;

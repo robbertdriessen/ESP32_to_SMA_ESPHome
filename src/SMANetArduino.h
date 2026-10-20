@@ -7,7 +7,10 @@
  SMANetArduino.h
  */
 
-#define maxlevel1packetsize 120
+// Holds a fully reassembled L2 frame. Responses with more than ~2 records are
+// split by the inverter's BT module into several L1 fragments (cmd 0x0008
+// followed by a final 0x0001), so this must be larger than one L1 packet.
+#define maxlevel1packetsize 512
 #define level1headerlength 18
 //const byte maxlevel1packetsize = 120;
 //const byte level1headerlength = 18;
@@ -33,6 +36,10 @@ extern unsigned char packet_send_counter;
 extern unsigned char lastpacketindex;
 extern unsigned char level1packet[maxlevel1packetsize];
 extern bool escapenextbyte;
+// Error code from the L2 header (bytes 23-24) of the last frame that passed
+// validateChecksum(). 0 = OK, 0x0100 = invalid password on logon, anything
+// else usually means the requested LRI is not supported.
+extern unsigned int l2ErrorCode;
 
 extern prog_uchar PROGMEM SMANET2header[];
 extern prog_uchar PROGMEM InverterCodeArray[];
