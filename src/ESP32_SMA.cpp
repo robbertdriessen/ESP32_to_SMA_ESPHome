@@ -455,6 +455,9 @@ void ESP32_SMA::loop()
       mainstate++;
       smaInverter.resetInnerstate();
       gCycleStartMs = millis();
+      // The last BT byte is from before the inter-cycle pause, which is longer
+      // than the stale threshold; restart the stale clock for this session.
+      gLastBTSuccessMs = millis();
     }
     else
     {
