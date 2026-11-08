@@ -297,3 +297,4 @@ grep -E "DC Pwr=|DC Power 0x|L2 error code" "$LOG" | tail
 - **No AI attribution.** Commits and PRs are authored by Robbert only: no
   `Co-Authored-By: Claude …` / Copilot trailers, no "Generated with …" lines,
   no AI tool as author or committer. (A local `commit-msg` hook strips them as a backstop.)
+- Default branch is `master`, never `main`. Remotes are SSH (`git@…`).
